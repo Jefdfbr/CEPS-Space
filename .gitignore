@@ -1,11 +1,9 @@
 # Backend
 /backend/target
-/backend/.env
 
 # Frontend
 /frontend/node_modules
 /frontend/dist
-/frontend/.env.local
 
 # Docker
 .dockerignore
@@ -15,3 +13,6 @@
 *.log
 .vscode
 .idea
+
+# Nota: .env files estão incluídos no repositório pois é privado
+# Facilita restauração completa do sistema
