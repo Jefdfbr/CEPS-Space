@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: jogos-educativos-backend
+    ports:
+      - "8081:8080"
+    environment:
+      - DATABASE_URL=postgresql://alje:alje@infra-db-1:5432/jogos_educativos
+      - JWT_SECRET=clubevip_secret_2024_change_this_in_production
+      - RUST_LOG=info
+      - HOST=0.0.0.0
+      - PORT=8080
+    networks:
+      - clubevip-network
+      - infra_default
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: jogos-educativos-frontend
+    ports:
+      - "3030:80"
+    networks:
+      - clubevip-network
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+networks:
+  clubevip-network:
+    driver: bridge
+  infra_default:
+    external: true

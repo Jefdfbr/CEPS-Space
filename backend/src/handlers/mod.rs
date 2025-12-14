@@ -1,0 +1,10 @@
+pub mod auth;
+pub mod games;
+pub mod word_search;
+pub mod quiz;
+pub mod sessions;
+pub mod admin;
+pub mod rooms;
+pub mod game_results;
+pub mod kahoot;
+pub mod open_question;

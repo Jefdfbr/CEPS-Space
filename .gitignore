@@ -1,0 +1,17 @@
+# Backend
+/backend/target
+/backend/.env
+
+# Frontend
+/frontend/node_modules
+/frontend/dist
+/frontend/.env.local
+
+# Docker
+.dockerignore
+
+# General
+.DS_Store
+*.log
+.vscode
+.idea
