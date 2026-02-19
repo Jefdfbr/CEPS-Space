@@ -25,6 +25,7 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminUsers from './pages/admin/AdminUsers';
 import AdminGames from './pages/admin/AdminGames';
 import CreateKahoot from './pages/CreateKahoot';
+import EditKahoot from './pages/EditKahoot';
 import KahootAccess from './pages/KahootAccess';
 import KahootPresenter from './pages/KahootPresenter';
 import KahootPlay from './pages/KahootPlay';
@@ -126,6 +127,12 @@ function App() {
               <div className="min-h-screen bg-gray-100 dark:bg-dark-surface">
                 <Navbar />
                 <CreateKahoot />
+              </div>
+            } />
+            <Route path="/edit/kahoot/:gameId" element={
+              <div className="min-h-screen bg-gray-100 dark:bg-dark-surface">
+                <Navbar />
+                <EditKahoot />
               </div>
             } />
             <Route path="/kahoot/access/:gameId" element={<KahootAccess />} />

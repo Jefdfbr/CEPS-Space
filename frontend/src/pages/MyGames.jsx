@@ -57,8 +57,8 @@ const MyGames = () => {
     }
   };
 
-  const deleteGame = async (gameId, gameName) => {
-    setGameToDelete({ id: gameId, name: gameName });
+  const deleteGame = async (gameId, gameName, gameType) => {
+    setGameToDelete({ id: gameId, name: gameName, game_type: gameType });
     setShowDeleteModal(true);
   };
 
@@ -67,7 +67,13 @@ const MyGames = () => {
 
     setDeleting(true);
     try {
-      await api.delete(`/protected/games/${gameToDelete.id}`);
+      if (gameToDelete.game_type === 'kahoot') {
+        await api.delete(`/protected/kahoot/games/${gameToDelete.id}`);
+      } else if (gameToDelete.game_type === 'open_question') {
+        await api.delete(`/protected/open-question/games/${gameToDelete.id}`);
+      } else {
+        await api.delete(`/protected/games/${gameToDelete.id}`);
+      }
       await fetchMyGames();
       setShowDeleteModal(false);
       setGameToDelete(null);
@@ -338,7 +344,7 @@ const MyGames = () => {
                       Copiar
                     </button>
                     <button
-                      onClick={() => deleteGame(game.id, game.name)}
+                      onClick={() => deleteGame(game.id, game.name, game.game_type)}
                       className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
                       title="Excluir jogo"
                     >
@@ -391,7 +397,7 @@ const MyGames = () => {
                     </a>
                   )}
                   <Link
-                    to={game.game_type === 'kahoot' ? '#' : game.game_type === 'open_question' ? `/edit/open-question/${game.id}` : game.game_type === 'word_search' ? `/edit/word-search/${game.id}` : `/edit/quiz/${game.id}`}
+                    to={game.game_type === 'kahoot' ? `/edit/kahoot/${game.id}` : game.game_type === 'open_question' ? `/edit/open-question/${game.id}` : game.game_type === 'word_search' ? `/edit/word-search/${game.id}` : `/edit/quiz/${game.id}`}
                     className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-dark-text-primary rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors flex items-center justify-center"
                     title="Editar jogo"
                   >

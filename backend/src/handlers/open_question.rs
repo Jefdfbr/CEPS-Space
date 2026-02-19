@@ -1087,3 +1087,38 @@ pub async fn update_game(
         "game_id": game_id
     })))
 }
+
+// DELETE /protected/open-question/games/:id - Excluir jogo
+pub async fn delete_game(
+    req: HttpRequest,
+    pool: web::Data<PgPool>,
+    game_id: web::Path<i32>,
+) -> Result<HttpResponse, Error> {
+    let game_id = game_id.into_inner();
+    let user_id = match req.extensions().get::<i32>() {
+        Some(id) => *id,
+        None => return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Unauthorized"
+        }))),
+    };
+
+    let result = sqlx::query(
+        "DELETE FROM open_question_games WHERE id = $1 AND user_id = $2"
+    )
+    .bind(game_id)
+    .bind(user_id)
+    .execute(pool.as_ref())
+    .await
+    .map_err(|e| {
+        log::error!("Erro ao excluir jogo open_question: {}", e);
+        actix_web::error::ErrorInternalServerError("Database error")
+    })?;
+
+    if result.rows_affected() == 0 {
+        return Ok(HttpResponse::NotFound().json(serde_json::json!({
+            "error": "Jogo não encontrado ou sem permissão"
+        })));
+    }
+
+    Ok(HttpResponse::NoContent().finish())
+}

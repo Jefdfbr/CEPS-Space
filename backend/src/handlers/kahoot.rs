@@ -56,6 +56,15 @@ pub struct AdvanceQuestion {
     pub question_index: i32,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateKahootGame {
+    pub title: String,
+    pub description: Option<String>,
+    pub presenter_password: Option<String>, // vazio = manter atual
+    pub room_password: Option<String>,      // vazio = manter atual
+    pub questions: Vec<CreateKahootQuestion>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct KahootGame {
     pub id: i32,
@@ -669,6 +678,319 @@ pub async fn finish_game(
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
         "message": "Jogo finalizado"
+    }))
+}
+
+// DELETE /api/protected/kahoot/games/:id - Excluir jogo
+pub async fn delete_game(
+    pool: web::Data<PgPool>,
+    game_id: web::Path<i32>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let game_id = game_id.into_inner();
+    let user_id = match extract_user_id(&req) {
+        Some(id) => id,
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Usuário não autenticado"
+        })),
+    };
+
+    let result = sqlx::query(
+        "DELETE FROM kahoot_games WHERE id = $1 AND user_id = $2"
+    )
+    .bind(game_id)
+    .bind(user_id)
+    .execute(pool.get_ref())
+    .await;
+
+    match result {
+        Ok(r) => {
+            if r.rows_affected() == 0 {
+                HttpResponse::NotFound().json(serde_json::json!({
+                    "error": "Jogo não encontrado ou sem permissão"
+                }))
+            } else {
+                HttpResponse::NoContent().finish()
+            }
+        }
+        Err(e) => {
+            log::error!("Erro ao excluir jogo kahoot: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Erro ao excluir jogo"
+            }))
+        }
+    }
+}
+
+// GET /api/protected/kahoot/games/:id/edit - Carregar jogo para edição (com is_correct visível)
+pub async fn get_game_for_edit(
+    pool: web::Data<PgPool>,
+    game_id: web::Path<i32>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let game_id = game_id.into_inner();
+    let user_id = match extract_user_id(&req) {
+        Some(id) => id,
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Usuário não autenticado"
+        })),
+    };
+
+    let game_row = match sqlx::query(
+        "SELECT id, title, description, current_question_index FROM kahoot_games WHERE id = $1 AND user_id = $2"
+    )
+    .bind(game_id)
+    .bind(user_id)
+    .fetch_optional(pool.get_ref())
+    .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => return HttpResponse::NotFound().json(serde_json::json!({
+            "error": "Jogo não encontrado ou sem permissão"
+        })),
+        Err(e) => {
+            log::error!("Erro ao buscar jogo para edição: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Erro ao buscar jogo"
+            }));
+        }
+    };
+
+    let question_rows = match sqlx::query(
+        "SELECT id, question_text, question_order, time_limit, points FROM kahoot_questions WHERE game_id = $1 ORDER BY question_order"
+    )
+    .bind(game_id)
+    .fetch_all(pool.get_ref())
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            log::error!("Erro ao buscar perguntas: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Erro ao buscar perguntas"
+            }));
+        }
+    };
+
+    let mut questions_json = Vec::new();
+    for q_row in &question_rows {
+        let q_id = q_row.get::<i32, _>("id");
+        let option_rows = match sqlx::query(
+            "SELECT id, option_text, option_order, is_correct FROM kahoot_options WHERE question_id = $1 ORDER BY option_order"
+        )
+        .bind(q_id)
+        .fetch_all(pool.get_ref())
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                log::error!("Erro ao buscar opções: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": "Erro ao buscar opções"
+                }));
+            }
+        };
+
+        let options: Vec<serde_json::Value> = option_rows.iter().map(|o| {
+            serde_json::json!({
+                "id": o.get::<i32, _>("id"),
+                "option_text": o.get::<String, _>("option_text"),
+                "option_order": o.get::<i32, _>("option_order"),
+                "is_correct": o.get::<bool, _>("is_correct"),
+            })
+        }).collect();
+
+        questions_json.push(serde_json::json!({
+            "id": q_id,
+            "question_text": q_row.get::<String, _>("question_text"),
+            "question_order": q_row.get::<i32, _>("question_order"),
+            "time_limit": q_row.get::<i32, _>("time_limit"),
+            "points": q_row.get::<i32, _>("points"),
+            "options": options,
+        }));
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "id": game_row.get::<i32, _>("id"),
+        "title": game_row.get::<String, _>("title"),
+        "description": game_row.get::<Option<String>, _>("description"),
+        "current_question_index": game_row.get::<i32, _>("current_question_index"),
+        "questions": questions_json,
+    }))
+}
+
+// PUT /api/protected/kahoot/games/:id - Atualizar jogo
+pub async fn update_game(
+    pool: web::Data<PgPool>,
+    game_id: web::Path<i32>,
+    game_data: web::Json<UpdateKahootGame>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let game_id = game_id.into_inner();
+    let user_id = match extract_user_id(&req) {
+        Some(id) => id,
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Usuário não autenticado"
+        })),
+    };
+
+    // Verificar propriedade
+    let exists = match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM kahoot_games WHERE id = $1 AND user_id = $2"
+    )
+    .bind(game_id)
+    .bind(user_id)
+    .fetch_one(pool.get_ref())
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            log::error!("Erro ao verificar jogo: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao verificar jogo"}));
+        }
+    };
+
+    if exists == 0 {
+        return HttpResponse::NotFound().json(serde_json::json!({
+            "error": "Jogo não encontrado ou sem permissão"
+        }));
+    }
+
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            log::error!("Erro ao iniciar transação: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao atualizar jogo"}));
+        }
+    };
+
+    // Atualizar campos básicos
+    if let Err(e) = sqlx::query(
+        "UPDATE kahoot_games SET title = $1, description = $2, updated_at = NOW() WHERE id = $3"
+    )
+    .bind(&game_data.title)
+    .bind(&game_data.description)
+    .bind(game_id)
+    .execute(&mut *tx)
+    .await
+    {
+        log::error!("Erro ao atualizar jogo: {}", e);
+        let _ = tx.rollback().await;
+        return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao atualizar jogo"}));
+    }
+
+    // Atualizar senha do apresentador se fornecida
+    if let Some(pass) = &game_data.presenter_password {
+        if !pass.is_empty() {
+            match hash(pass, DEFAULT_COST) {
+                Ok(h) => {
+                    if let Err(e) = sqlx::query(
+                        "UPDATE kahoot_games SET presenter_password = $1 WHERE id = $2"
+                    )
+                    .bind(&h)
+                    .bind(game_id)
+                    .execute(&mut *tx)
+                    .await
+                    {
+                        log::error!("Erro ao atualizar senha apresentador: {}", e);
+                        let _ = tx.rollback().await;
+                        return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao atualizar senha"}));
+                    }
+                }
+                Err(e) => {
+                    log::error!("Erro ao criar hash: {}", e);
+                    let _ = tx.rollback().await;
+                    return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao processar senha"}));
+                }
+            }
+        }
+    }
+
+    // Atualizar senha dos jogadores se fornecida
+    if let Some(pass) = &game_data.room_password {
+        if !pass.is_empty() {
+            match hash(pass, DEFAULT_COST) {
+                Ok(h) => {
+                    if let Err(e) = sqlx::query(
+                        "UPDATE kahoot_games SET room_password = $1 WHERE id = $2"
+                    )
+                    .bind(&h)
+                    .bind(game_id)
+                    .execute(&mut *tx)
+                    .await
+                    {
+                        log::error!("Erro ao atualizar senha sala: {}", e);
+                        let _ = tx.rollback().await;
+                        return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao atualizar senha"}));
+                    }
+                }
+                Err(e) => {
+                    log::error!("Erro ao criar hash: {}", e);
+                    let _ = tx.rollback().await;
+                    return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao processar senha"}));
+                }
+            }
+        }
+    }
+
+    // Deletar perguntas e opções antigas (cascade)
+    if let Err(e) = sqlx::query("DELETE FROM kahoot_questions WHERE game_id = $1")
+        .bind(game_id)
+        .execute(&mut *tx)
+        .await
+    {
+        log::error!("Erro ao deletar perguntas antigas: {}", e);
+        let _ = tx.rollback().await;
+        return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao atualizar perguntas"}));
+    }
+
+    // Re-inserir perguntas e opções
+    for question in &game_data.questions {
+        let question_id = match sqlx::query(
+            "INSERT INTO kahoot_questions (game_id, question_text, question_order, time_limit, points) VALUES ($1, $2, $3, $4, $5) RETURNING id"
+        )
+        .bind(game_id)
+        .bind(&question.question_text)
+        .bind(question.question_order)
+        .bind(question.time_limit.unwrap_or(30))
+        .bind(question.points.unwrap_or(100))
+        .fetch_one(&mut *tx)
+        .await
+        {
+            Ok(row) => row.get::<i32, _>("id"),
+            Err(e) => {
+                log::error!("Erro ao inserir pergunta: {}", e);
+                let _ = tx.rollback().await;
+                return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao salvar perguntas"}));
+            }
+        };
+
+        for option in &question.options {
+            if let Err(e) = sqlx::query(
+                "INSERT INTO kahoot_options (question_id, option_text, option_order, is_correct) VALUES ($1, $2, $3, $4)"
+            )
+            .bind(question_id)
+            .bind(&option.option_text)
+            .bind(option.option_order)
+            .bind(option.is_correct)
+            .execute(&mut *tx)
+            .await
+            {
+                log::error!("Erro ao inserir opção: {}", e);
+                let _ = tx.rollback().await;
+                return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao salvar opções"}));
+            }
+        }
+    }
+
+    if let Err(e) = tx.commit().await {
+        log::error!("Erro ao fazer commit: {}", e);
+        return HttpResponse::InternalServerError().json(serde_json::json!({"error": "Erro ao salvar jogo"}));
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "id": game_id,
+        "message": "Jogo atualizado com sucesso"
     }))
 }
 
