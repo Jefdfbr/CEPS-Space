@@ -1,213 +1,171 @@
-# 🔄 Guia de Restauração Completa - CEPS Space
+# 🔄 Guia de Restauração Completa — CEPS Space
 
-## 📦 Após Formatar a VPS
+Caso perca a VPS ou precise migrar, siga este guia do zero.
+O banco de dados e a config do OneDrive ficam em: **OneDrive → Backups/ceps-space/**
 
-### 1. Instalar Dependências Básicas
+---
+
+## 1. Provisionar nova VPS (Ubuntu 22.04+ / Debian 12+)
 
 ```bash
-# Atualizar sistema
-sudo apt update && sudo apt upgrade -y
-
-# Instalar Docker
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-
-# Instalar Docker Compose
-sudo apt install docker-compose -y
-
-# Instalar Git
-sudo apt install git -y
-
-# Instalar Nginx
-sudo apt install nginx -y
+apt update && apt upgrade -y
 ```
 
-### 2. Clonar o Repositório
+---
+
+## 2. Instalar dependências
 
 ```bash
+# Docker
+curl -fsSL https://get.docker.com | bash
+
+# Demais ferramentas
+apt install -y docker-compose-plugin git nginx certbot python3-certbot-nginx rclone
+```
+
+---
+
+## 3. Restaurar acesso ao OneDrive (rclone)
+
+O arquivo `rclone.conf.bak` fica salvo na própria pasta do OneDrive.
+Você precisa de **outro** dispositivo com rclone para baixá-lo primeiro.
+
+**Na sua máquina local**, configure o rclone e baixe o arquivo:
+```bash
+# Se não tiver rclone local: https://rclone.org/downloads/
+rclone config  # configure "onedrive" na máquina local
+rclone copy "onedrive:Backups/ceps-space/rclone.conf.bak" ./
+```
+
+**Na nova VPS**, copie o arquivo:
+```bash
+mkdir -p /root/.config/rclone
+# Envie o rclone.conf.bak para a VPS (scp, sftp, etc.)
+cp rclone.conf.bak /root/.config/rclone/rclone.conf
+
+# Testar
+rclone lsd onedrive:
+```
+
+---
+
+## 4. Clonar o repositório
+
+```bash
+mkdir -p /var/www
 cd /var/www
-git clone https://github.com/Jefdfbr/CEPS-Space.git ClubeVip
-cd ClubeVip
+git clone https://github.com/Jefdfbr/CEPS-Space.git ceps-space
+cd ceps-space
+chmod +x start.sh backup_db.sh
 ```
 
-### 3. Restaurar Arquivos de Configuração
+> Os arquivos `.env.backend` e `frontend/.env` já estão no repositório (repo privado).
 
-Os arquivos de ambiente já estão incluídos no repositório (`.env.production` e `.env.backend`).
+---
 
-### 4. Configurar Banco de Dados PostgreSQL
-
-O banco de dados precisa estar rodando em um container separado ou na rede `infra_default`.
-
-**Se precisar criar a rede Docker:**
-```bash
-docker network create infra_default
-```
-
-**Se precisar criar o container PostgreSQL:**
-```bash
-docker run -d \
-  --name infra-db-1 \
-  --network infra_default \
-  -e POSTGRES_USER=alje \
-  -e POSTGRES_PASSWORD=alje \
-  -e POSTGRES_DB=jogos_educativos \
-  -p 5432:5432 \
-  -v postgres_data:/var/lib/postgresql/data \
-  postgres:15
-```
-
-### 5. Configurar Nginx
-
-Criar arquivo: `/etc/nginx/sites-available/clubevip.space`
-
-```nginx
-server {
-    listen 80;
-    server_name ceps.space www.ceps.space;
-
-    # Frontend
-    location / {
-        proxy_pass http://localhost:3030;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-
-    # Backend API
-    location /api {
-        proxy_pass http://localhost:8081;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # WebSocket
-    location /ws {
-        proxy_pass http://localhost:8081;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "Upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
-```
-
-**Habilitar site:**
-```bash
-sudo ln -s /etc/nginx/sites-available/clubevip.space /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
-```
-
-### 6. Instalar SSL (HTTPS)
+## 5. Restaurar o banco de dados
 
 ```bash
-sudo apt install certbot python3-certbot-nginx -y
-sudo certbot --nginx -d ceps.space -d www.ceps.space
+# Criar diretório de backups
+mkdir -p /var/backups/ceps-space
+
+# Listar backups disponíveis no OneDrive
+rclone ls "onedrive:Backups/ceps-space/"
+
+# Baixar o backup mais recente (substitua o nome do arquivo)
+rclone copy "onedrive:Backups/ceps-space/backup_XXXXXXXX_XXXXXX.sql.gz" /var/backups/ceps-space/
+
+# Subir apenas o banco primeiro
+docker compose up -d db
+sleep 8
+
+# Restaurar
+gunzip -c /var/backups/ceps-space/backup_XXXXXXXX_XXXXXX.sql.gz \
+  | docker exec -i ceps-space-db psql -U ceps_user -d jogos_educativos
 ```
 
-### 7. Iniciar Aplicação
+---
+
+## 6. Subir a aplicação
 
 ```bash
-cd /var/www/ClubeVip
-chmod +x start.sh
-./start.sh
+cd /var/www/ceps-space
+docker compose up -d
+docker ps  # todos devem aparecer como "Up"
 ```
 
-### 8. Verificar Status
+---
+
+## 7. Configurar Nginx
 
 ```bash
-# Ver containers rodando
-docker ps
-
-# Ver logs
-docker-compose logs -f
-
-# Testar backend
-curl http://localhost:8081/api/health
-
-# Testar frontend
-curl http://localhost:3030
+cp nginx-config.conf /etc/nginx/sites-available/ceps-space
+ln -sf /etc/nginx/sites-available/ceps-space /etc/nginx/sites-enabled/ceps-space
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
 ```
 
-## 🔑 Credenciais e Configurações Importantes
+---
 
-### Banco de Dados PostgreSQL
-- **Host:** infra-db-1 (container) ou localhost:5432
-- **Usuário:** alje
-- **Senha:** alje
-- **Database:** jogos_educativos
-- **URL Completa:** `postgresql://alje:alje@infra-db-1:5432/jogos_educativos`
+## 8. Instalar SSL (HTTPS)
 
-### JWT Secret
-- **Secret:** `clubevip_secret_2024_change_this_in_production`
-- ⚠️ **Recomendado:** Mudar em produção para algo mais seguro
-
-### URLs da Aplicação
-- **Frontend Produção:** https://ceps.space
-- **API Produção:** https://ceps.space/api
-- **Backend Container:** http://localhost:8081
-- **Frontend Container:** http://localhost:3030
-
-### Portas
-- **Backend:** 8081 (host) → 8080 (container)
-- **Frontend:** 3030 (host) → 80 (container)
-- **PostgreSQL:** 5432
-
-## 🔄 Backup e Restauração do Banco de Dados
-
-### Fazer Backup
 ```bash
-docker exec infra-db-1 pg_dump -U alje jogos_educativos > backup.sql
+certbot --nginx -d ceps.space -d www.ceps.space
 ```
 
-### Restaurar Backup
+---
+
+## 9. Reativar backup automático
+
 ```bash
-cat backup.sql | docker exec -i infra-db-1 psql -U alje -d jogos_educativos
+apt install -y cron && systemctl enable --now cron
+
+(crontab -l 2>/dev/null; echo "0 2 * * * /var/www/ceps-space/backup_db.sh >> /var/backups/ceps-space/backup.log 2>&1") | crontab -
+
+# Testar
+bash /var/www/ceps-space/backup_db.sh
 ```
 
-## 🐛 Troubleshooting
+---
 
-### Containers não iniciam
+## 10. Verificar tudo
+
 ```bash
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
+docker ps --format "table {{.Names}}\t{{.Status}}"
+curl -s http://localhost:8081/api/health
+docker compose logs --tail=20
 ```
 
-### Erro de rede
+---
+
+## 📋 Referência rápida
+
+| Item | Valor |
+|---|---|
+| Repositório | https://github.com/Jefdfbr/CEPS-Space |
+| Domínio | ceps.space |
+| Frontend | porta 3030 (host) → 80 (container) |
+| Backend | porta 8081 (host) → 8080 (container) |
+| Banco | PostgreSQL 16, container `ceps-space-db` |
+| DB name | `jogos_educativos` |
+| DB user | `ceps_user` |
+| Backups locais | `/var/backups/ceps-space/` (7 dias) |
+| Backups OneDrive | `OneDrive/Backups/ceps-space/` |
+| Cron backup | Todo dia às 02h00 |
+
+---
+
+## 🆘 Troubleshooting rápido
+
 ```bash
-docker network ls
-docker network create infra_default
+# Rebuild completo
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+
+# Ver logs do backend
+docker logs ceps-space-backend --tail=50
+
+# Acessar banco direto
+docker exec -it ceps-space-db psql -U ceps_user -d jogos_educativos
 ```
-
-### Limpar tudo e recomeçar
-```bash
-docker-compose down -v
-docker system prune -a
-# Depois refazer do passo 7
-```
-
-## 📝 Notas Importantes
-
-1. O repositório Git contém **TODOS** os arquivos necessários, incluindo `.env`
-2. Certifique-se de que a rede `infra_default` existe antes de iniciar
-3. O banco PostgreSQL precisa estar acessível na rede `infra_default`
-4. Após mudanças no código, faça rebuild: `docker-compose build`
-5. DNS precisa apontar `ceps.space` para o IP da VPS
-
-## 🔐 Segurança
-
-- O repositório é **PRIVADO** - mantenha assim
-- Todas as credenciais estão aqui para facilitar restauração
-- Em produção, considere usar variáveis de ambiente mais seguras
-- Sempre mantenha o Nginx e Docker atualizados

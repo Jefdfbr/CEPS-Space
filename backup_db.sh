@@ -54,15 +54,36 @@ log "${DELETED} arquivo(s) antigo(s) removido(s)."
 TOTAL=$(find "$BACKUP_DIR" -name "backup_*.sql.gz" | wc -l)
 log "Total de backups armazenados: ${TOTAL}"
 
+# ---- Backup rclone config --------------------------------------------------
+RCLONE_CONF="${HOME}/.config/rclone/rclone.conf"
+RCLONE_CONF_BACKUP="${BACKUP_DIR}/rclone.conf.bak"
+if [ -f "$RCLONE_CONF" ]; then
+    cp "$RCLONE_CONF" "$RCLONE_CONF_BACKUP"
+    chmod 600 "$RCLONE_CONF_BACKUP"
+    log "Config do rclone salva em ${RCLONE_CONF_BACKUP}"
+fi
+
 # ---- Upload to OneDrive (if rclone configured) ------------------------------
 if command -v rclone &>/dev/null && [ -n "${RCLONE_REMOTE}" ]; then
     REMOTE_NAME="${RCLONE_REMOTE%%:*}"
     if rclone listremotes 2>/dev/null | grep -q "^${REMOTE_NAME}:"; then
         log "Enviando backup para OneDrive (${RCLONE_REMOTE})..."
-        if rclone copy "$BACKUP_FILE" "${RCLONE_REMOTE}/" --log-level INFO 2>>"$LOG_FILE"; then
+        UPLOAD_OK=true
+
+        # Upload DB backup
+        if ! rclone copy "$BACKUP_FILE" "${RCLONE_REMOTE}/" --log-level INFO 2>>"$LOG_FILE"; then
+            UPLOAD_OK=false
+        fi
+
+        # Upload rclone.conf backup (so it can be recovered from OneDrive itself)
+        if [ -f "$RCLONE_CONF_BACKUP" ]; then
+            rclone copy "$RCLONE_CONF_BACKUP" "${RCLONE_REMOTE}/" --log-level INFO 2>>"$LOG_FILE" || true
+        fi
+
+        if $UPLOAD_OK; then
             log "Upload para OneDrive concluído com sucesso."
-            # Remove remote backups older than KEEP_DAYS
-            rclone delete --min-age "${KEEP_DAYS}d" "${RCLONE_REMOTE}/" 2>>"$LOG_FILE" || true
+            # Remove remote DB backups older than KEEP_DAYS (keep rclone.conf.bak always)
+            rclone delete --min-age "${KEEP_DAYS}d" --include "backup_*.sql.gz" "${RCLONE_REMOTE}/" 2>>"$LOG_FILE" || true
         else
             log "AVISO: falha no upload para OneDrive (backup local mantido)."
         fi
