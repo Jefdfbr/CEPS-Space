@@ -36,6 +36,7 @@ const CreateWordSearch = () => {
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState('success');
   const [showFewWordsModal, setShowFewWordsModal] = useState(false);
+  const [hideWords, setHideWords] = useState(false);
 
   useEffect(() => {
     const tempData = localStorage.getItem('tempGameData');
@@ -319,6 +320,7 @@ const CreateWordSearch = () => {
         time_limit: difficulty === 'easy' ? 600 : difficulty === 'medium' ? 300 : 180,
         allowed_directions: allowedDirections,
         concepts: concepts,
+        hide_words: hideWords,
       });
 
       localStorage.removeItem('tempGameData');
@@ -353,27 +355,57 @@ const CreateWordSearch = () => {
           <div className="lg:col-span-2 space-y-6">
             {/* Add Words */}
             <div className="bg-white dark:bg-dark-surface border border-gray-200 dark:border-dark-border rounded-xl p-6">
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-dark-text-primary mb-4">
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-dark-text-primary mb-1">
                 Palavras do Jogo
               </h2>
+              <p className="text-sm text-gray-500 dark:text-dark-text-secondary mb-4">
+                Adicione de 5 a 20 palavras com letras de A–Z (sem acentos).
+              </p>
 
-              <div className="flex gap-2 mb-4">
-                <input
-                  type="text"
-                  value={currentWord}
-                  onChange={(e) => setCurrentWord(e.target.value.toUpperCase())}
-                  onKeyPress={(e) => e.key === 'Enter' && addWord()}
-                  placeholder="Digite uma palavra (sem acentos)"
-                  maxLength={gridSize}
-                  className="flex-1 px-4 py-3 bg-gray-50 dark:bg-dark-elevated border border-gray-300 dark:border-dark-border rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent uppercase text-gray-900 dark:text-dark-text-primary placeholder-gray-400 dark:placeholder-gray-500"
-                />
-                <button
-                  onClick={addWord}
-                  className="px-6 py-3 bg-yellow-500 text-black rounded-lg hover:bg-yellow-400 transition-colors font-bold flex items-center gap-2"
-                >
-                  <Plus className="w-5 h-5" />
-                  Adicionar
-                </button>
+              {/* Esconder Palavras — visível só quando todas as palavras têm descrição */}
+              {words.length > 0 && words.every(w => concepts[w.toUpperCase()]) && (
+                <div className="flex items-start gap-3 mb-5 p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-lg">
+                  <input
+                    type="checkbox"
+                    id="hideWords"
+                    checked={hideWords}
+                    onChange={(e) => setHideWords(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 text-yellow-500 bg-gray-100 dark:bg-dark-elevated border-gray-300 dark:border-gray-600 rounded focus:ring-yellow-500"
+                  />
+                  <div>
+                    <label htmlFor="hideWords" className="text-sm font-semibold text-purple-900 dark:text-purple-200 cursor-pointer">
+                      🫣 Esconder Palavras
+                    </label>
+                    <p className="text-xs text-purple-700 dark:text-purple-300 mt-0.5">
+                      O nome de cada palavra ficará desfocado e ilegível. O jogador lê a descrição para descobrir a palavra no grid. Ao encontrá-la, o nome é revelado.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Nova Palavra */}
+              <div className="mb-1">
+                <label className="block text-sm font-semibold text-gray-700 dark:text-dark-text-primary mb-2">
+                  Nova palavra
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={currentWord}
+                    onChange={(e) => setCurrentWord(e.target.value.toUpperCase())}
+                    onKeyPress={(e) => e.key === 'Enter' && addWord()}
+                    placeholder="Ex: FOTOSSINTESE"
+                    maxLength={gridSize}
+                    className="flex-1 px-4 py-3 bg-gray-50 dark:bg-dark-elevated border border-gray-300 dark:border-dark-border rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent uppercase text-gray-900 dark:text-dark-text-primary placeholder-gray-400 dark:placeholder-gray-500"
+                  />
+                  <button
+                    onClick={addWord}
+                    className="px-6 py-3 bg-yellow-500 text-black rounded-lg hover:bg-yellow-400 transition-colors font-bold flex items-center gap-2"
+                  >
+                    <Plus className="w-5 h-5" />
+                    Adicionar
+                  </button>
+                </div>
               </div>
 
               <div className="mb-4">

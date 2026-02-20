@@ -51,6 +51,7 @@ pub enum WsMessage {
     PlayerJoined {
         username: String,
         player_id: i32,
+        player_color: String,
     },
     PlayerLeft {
         username: String,
@@ -87,6 +88,7 @@ pub enum WsMessage {
 pub struct PlayerInfo {
     pub player_id: i32,
     pub username: String,
+    pub player_color: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +103,7 @@ pub struct ConnectionInfo {
     pub player_id: i32,
     pub username: String,
     pub session_id: String,
+    pub player_color: String,
 }
 
 // Gerenciador de salas
@@ -149,6 +152,7 @@ impl Actor for GameWebSocket {
                 .map(|conn| PlayerInfo {
                     player_id: conn.player_id,
                     username: conn.username.clone(),
+                    player_color: conn.player_color.clone(),
                 })
                 .collect();
             
@@ -158,6 +162,7 @@ impl Actor for GameWebSocket {
                 player_id: self.user_id,
                 username: self.username.clone(),
                 session_id: self.session_id.clone(),
+                player_color: self.player_color.clone(),
             });
             
             (was_empty, existing_players)
@@ -174,6 +179,7 @@ impl Actor for GameWebSocket {
         self.broadcast(WsMessage::PlayerJoined {
             player_id: self.user_id,
             username: self.username.clone(),
+            player_color: self.player_color.clone(),
         }, None);
         
         // Se é a primeira conexão, iniciar/retomar timer
@@ -539,9 +545,9 @@ pub async fn room_websocket(
         });
     
     // Buscar participante (autenticado ou anônimo)
-    let participant_result = if let Some(user_id) = user_id_from_token {
-        // Usuário autenticado
-        sqlx::query_as::<_, (String, Option<String>)>(
+    let (username, player_color) = if let Some(user_id) = user_id_from_token {
+        // Usuário autenticado: tentar buscar em room_participants primeiro
+        let from_participants = sqlx::query_as::<_, (String, Option<String>)>(
             r#"
             SELECT u.name, rp.player_color
             FROM room_participants rp
@@ -552,7 +558,48 @@ pub async fn room_websocket(
         .bind(*room_id)
         .bind(user_id)
         .fetch_optional(pool.get_ref())
-        .await
+        .await;
+
+        match from_participants {
+            Ok(Some((name, color))) => {
+                log::info!("✅ Jogador encontrado em room_participants: {} (cor: {:?})", name, color);
+                (name, color.unwrap_or_else(|| "#10B981".to_string()))
+            },
+            _ => {
+                // Fallback: buscar nome diretamente em users e inserir em room_participants
+                log::warn!("⚠️ Participante não encontrado em room_participants, usando fallback de users");
+                let user_row = sqlx::query_as::<_, (String,)>(
+                    "SELECT name FROM users WHERE id = $1"
+                )
+                .bind(user_id)
+                .fetch_optional(pool.get_ref())
+                .await;
+
+                let name = match user_row {
+                    Ok(Some((n,))) => n,
+                    _ => format!("Jogador {}", user_id),
+                };
+
+                // Atribuir cor e inserir em room_participants para futuras conexões
+                let colors = ["#EF4444","#3B82F6","#10B981","#F59E0B","#8B5CF6","#EC4899","#14B8A6","#F97316"];
+                // Usar user_id para cor determinística (sem race condition)
+                let color = colors[(user_id as usize) % colors.len()].to_string();
+
+                let _ = sqlx::query(
+                    "INSERT INTO room_participants (room_id, user_id, is_host, player_color)
+                     VALUES ($1, $2, false, $3)
+                     ON CONFLICT DO NOTHING"
+                )
+                .bind(*room_id)
+                .bind(user_id)
+                .bind(&color)
+                .execute(pool.get_ref())
+                .await;
+
+                log::info!("✅ Jogador inserido via fallback: {} (cor: {})", name, color);
+                (name, color)
+            }
+        }
     } else if let Some(ref sid) = session_id {
         // Jogador anônimo
         log::info!("🔍 Buscando jogador anônimo - room_id: {}, session_id: {}", room_id, sid);
@@ -567,29 +614,14 @@ pub async fn room_websocket(
         .bind(sid)
         .fetch_optional(pool.get_ref())
         .await;
-        
+
         log::info!("🔍 Resultado da busca: {:?}", result);
-        result
+        match result {
+            Ok(Some((name, color))) => (name, color.unwrap_or_else(|| "#10B981".to_string())),
+            _ => ("Anônimo".to_string(), "#10B981".to_string()),
+        }
     } else {
         return Err(actix_web::error::ErrorUnauthorized("No authentication provided"));
-    };
-    
-    let (username, player_color) = match participant_result {
-        Ok(Some((name, color))) => {
-            log::info!("✅ Jogador encontrado: {} (cor: {:?})", name, color);
-            (
-                name,
-                color.unwrap_or_else(|| "#10B981".to_string())
-            )
-        },
-        Ok(None) => {
-            log::warn!("⚠️ Nenhum participante encontrado no banco");
-            ("Unknown".to_string(), "#10B981".to_string())
-        },
-        Err(e) => {
-            log::error!("❌ Erro ao buscar participante: {}", e);
-            ("Unknown".to_string(), "#10B981".to_string())
-        }
     };
     
     let session_id_str = session_id.clone().unwrap_or_else(|| format!("user_{}", user_id_from_token.unwrap_or(0)));

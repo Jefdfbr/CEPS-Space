@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Clock, Star, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, Trophy } from 'lucide-react';
+import { Clock, Star, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, Trophy, EyeOff } from 'lucide-react';
 import { useRoomWebSocket } from '../../hooks/useRoomWebSocket';
 import axios from 'axios';
 
@@ -42,7 +42,7 @@ const seededRandom = (seed) => {
   };
 };
 
-const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor }) => {
+const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor, myPlayerId }) => {
   const [grid, setGrid] = useState([]);
   const [words, setWords] = useState([]);
   const [foundWords, setFoundWords] = useState(new Set()); // Todas as palavras encontradas (todos os jogadores)
@@ -77,10 +77,9 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor 
   const handleWebSocketMessage = (message) => {
     
     if (message.type === 'WordFound') {
-      // Ignorar mensagens do próprio jogador (comparar pela cor e pelo player_id)
-      const myPlayerId = localStorage.getItem('player_id');
-      const isOwnMessage = (message.player_color === playerColor) || 
-                           (message.player_id && myPlayerId && message.player_id.toString() === myPlayerId);
+      // Ignorar mensagens do próprio jogador usando player_id (mais confiável que cor)
+      const isOwnMessage = myPlayerId != null && message.player_id != null &&
+                           message.player_id.toString() === myPlayerId.toString();
       
       if (!isOwnMessage) {
         
@@ -117,7 +116,7 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor 
         if (prev.some(p => p.player_id === message.player_id)) {
           return prev;
         }
-        return [...prev, { player_id: message.player_id, username: message.username }];
+        return [...prev, { player_id: message.player_id, username: message.username, player_color: message.player_color }];
       });
     } else if (message.type === 'PlayerLeft') {
       setOnlinePlayers(prev => {
@@ -1042,6 +1041,11 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor 
                   const isFound = foundWords.has(wordUpper);
                   const hasConcept = gameConfig.concepts && gameConfig.concepts[wordUpper];
                   const isExpanded = expandedConcept === wordUpper;
+                  // hide_words: blur word name until found; always show concept
+                  const hideWordsMode = !!(gameConfig.hide_words);
+                  const isHidden = hideWordsMode && !isFound;
+                  const showConcept = hasConcept && (isHidden || isExpanded);
+                  const canToggleConcept = hasConcept && !isHidden;
                   
                   return (
                     <div
@@ -1054,17 +1058,20 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor 
                     >
                       <div
                         className={`px-4 py-3 ${
-                          hasConcept ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800' : ''
+                          canToggleConcept ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800' : ''
                         }`}
-                        onClick={() => hasConcept && setExpandedConcept(isExpanded ? null : wordUpper)}
+                        onClick={() => canToggleConcept && setExpandedConcept(isExpanded ? null : wordUpper)}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <span className={`font-medium ${
-                              isFound
-                                ? 'text-green-700 dark:text-green-400 line-through'
-                                : 'text-gray-900 dark:text-gray-100'
-                            }`}>
+                            <span
+                              className={`font-medium select-none ${
+                                isFound
+                                  ? 'text-green-700 dark:text-green-400 line-through'
+                                  : 'text-gray-900 dark:text-gray-100'
+                              }`}
+                              style={isHidden ? { filter: 'blur(7px)', userSelect: 'none' } : undefined}
+                            >
                               {word}
                             </span>
                           </div>
@@ -1072,7 +1079,10 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor 
                             {isFound && (
                               <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
                             )}
-                            {hasConcept && (
+                            {isHidden && (
+                              <EyeOff className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                            )}
+                            {canToggleConcept && (
                               <ChevronDown 
                                 className={`w-4 h-4 text-gray-500 transition-transform ${
                                   isExpanded ? 'rotate-180' : ''
@@ -1083,7 +1093,7 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor 
                         </div>
                       </div>
                       
-                      {hasConcept && isExpanded && (
+                      {showConcept && (
                         <div className="px-4 pb-3 pt-1">
                           <div className="text-sm text-gray-600 dark:text-dark-text-secondary bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border-l-4 border-blue-500">
                             {gameConfig.concepts[wordUpper]}
@@ -1094,6 +1104,35 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor 
                   );
                 })}
               </div>
+
+              {/* Jogadores Online */}
+              {roomId && isConnected && (
+                <div className="mt-6 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                  <h4 className="font-bold text-green-900 dark:text-green-300 mb-3 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                    Jogadores Online ({onlinePlayers.length})
+                  </h4>
+                  {onlinePlayers.length === 0 ? (
+                    <p className="text-sm text-green-700 dark:text-green-400">Nenhum outro jogador online</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {onlinePlayers.map((player) => (
+                        <div key={player.player_id} className="flex items-center gap-2">
+                          <div
+                            className="w-6 h-6 rounded-full border-2 border-white shadow flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                            style={{ backgroundColor: player.player_color || '#10B981' }}
+                          >
+                            {(player.username || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <span className="text-sm text-gray-800 dark:text-dark-text-primary truncate">
+                            {player.username}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Pontuações Multiplayer */}
               {roomId && roomScores.length > 0 && (

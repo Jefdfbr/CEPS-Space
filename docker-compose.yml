@@ -1,35 +1,56 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: ceps-space-db
+    environment:
+      - POSTGRES_USER=ceps_user
+      - POSTGRES_PASSWORD=ceps_pass_2024
+      - POSTGRES_DB=jogos_educativos
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ceps-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ceps_user -d jogos_educativos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
-    container_name: jogos-educativos-backend
+    container_name: ceps-space-backend
     ports:
       - "8081:8080"
     environment:
-      - DATABASE_URL=postgresql://alje:alje@infra-db-1:5432/jogos_educativos
+      - DATABASE_URL=postgresql://ceps_user:ceps_pass_2024@db:5432/jogos_educativos
       - JWT_SECRET=clubevip_secret_2024_change_this_in_production
       - RUST_LOG=info
       - HOST=0.0.0.0
       - PORT=8080
     networks:
-      - clubevip-network
-      - infra_default
+      - ceps-network
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
-    container_name: jogos-educativos-frontend
+    container_name: ceps-space-frontend
     ports:
       - "3030:80"
     networks:
-      - clubevip-network
+      - ceps-network
     restart: unless-stopped
     depends_on:
       - backend
 
+volumes:
+  postgres_data:
+
 networks:
-  clubevip-network:
+  ceps-network:
     driver: bridge
-  infra_default:
-    external: true

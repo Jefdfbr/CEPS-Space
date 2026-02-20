@@ -13,6 +13,7 @@ const WordSearchPlay = () => {
   const [gameConfig, setGameConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [playerColor, setPlayerColor] = useState(null);
+  const [myPlayerId, setMyPlayerId] = useState(null);
   const [authorized, setAuthorized] = useState(false);
 
   // PROTEÇÃO CRÍTICA - Executa IMEDIATAMENTE antes de qualquer renderização
@@ -76,22 +77,29 @@ const WordSearchPlay = () => {
           // Se for jogador anônimo e já tiver a cor armazenada
           if (sessionId && playerColorStored) {
             setPlayerColor(playerColorStored);
+            // Computar myPlayerId usando MESMA lógica do backend (hash do session_id)
+            let hash = 0;
+            for (let i = 0; i < sessionId.length; i++) {
+              hash = (hash + sessionId.charCodeAt(i)) | 0;
+            }
+            setMyPlayerId((Math.abs(hash) % 1000000) + 1);
             console.log('Cor do jogador (anônimo):', playerColorStored);
           } else if (!sessionId) {
             // Jogador autenticado - buscar do backend
             const roomResponse = await api.get(`/protected/rooms/${roomId}`);
             
-            // Obter user_id do token
+            // Obter user_id do token (campo 'sub' no JWT)
             const token = localStorage.getItem('token');
             if (token) {
               const payload = JSON.parse(atob(token.split('.')[1]));
-              const currentUserId = payload.user_id;
+              const currentUserId = payload.sub; // 'sub' é o campo correto
+              setMyPlayerId(currentUserId);
               
               // Encontrar participante atual
               const participant = roomResponse.data.participants.find(p => p.user_id === currentUserId);
               if (participant && participant.player_color) {
                 setPlayerColor(participant.player_color);
-                console.log('Cor do jogador:', participant.player_color);
+                console.log('Cor do jogador (autenticado):', participant.player_color);
               }
             }
           }
@@ -158,6 +166,7 @@ const WordSearchPlay = () => {
       onComplete={handleComplete}
       roomId={roomId}
       playerColor={playerColor}
+      myPlayerId={myPlayerId}
     />
   );
 };

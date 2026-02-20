@@ -16,6 +16,7 @@ const EditQuiz = () => {
   const [endScreenButtonUrl, setEndScreenButtonUrl] = useState('');
   const [endScreenButtonNewTab, setEndScreenButtonNewTab] = useState(true);
   const [showEndScreenButton, setShowEndScreenButton] = useState(false);
+  const [minPlayers, setMinPlayers] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState('success');
@@ -42,7 +43,13 @@ const EditQuiz = () => {
       setEndScreenButtonNewTab(game.end_screen_button_new_tab !== false);
       setShowEndScreenButton(!!(game.end_screen_button_text && game.end_screen_button_url));
 
-      console.log('Buscando questões...');
+      // Load quiz config for min_players
+      try {
+        const configResponse = await api.get(`/quiz/${gameId}`);
+        setMinPlayers(configResponse.data.min_players != null ? String(configResponse.data.min_players) : '');
+      } catch (_) {
+        // config may not exist yet, leave default
+      }
       const questionsResponse = await api.get(`/quiz/${gameId}/questions`);
       console.log('Resposta das questões:', questionsResponse.data);
       
@@ -202,6 +209,7 @@ const EditQuiz = () => {
         end_screen_button_text: showEndScreenButton ? endScreenButtonText : null,
         end_screen_button_url: showEndScreenButton ? endScreenButtonUrl : null,
         end_screen_button_new_tab: showEndScreenButton ? endScreenButtonNewTab : null,
+        min_players: minPlayers ? parseInt(minPlayers) : null,
       });
 
       await api.delete(`/protected/quiz/${gameId}/questions`);
@@ -443,6 +451,33 @@ const EditQuiz = () => {
             <Plus className="w-5 h-5" />
             Adicionar Pergunta
           </button>
+
+          {/* Multiplayer Settings */}
+          <div className="bg-white dark:bg-dark-surface border border-gray-200 dark:border-dark-border rounded-xl p-6">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-dark-text-primary mb-1">
+              Modo Sala
+            </h2>
+            <p className="text-sm text-gray-500 dark:text-dark-text-secondary mb-4">
+              Configurações aplicadas quando o jogo é jogado em uma sala com múltiplos jogadores.
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-dark-text-primary mb-1">
+                Mínimo de respostas para avançar
+              </label>
+              <p className="text-xs text-gray-500 dark:text-dark-text-secondary mb-2">
+                O jogo só permitirá avançar para a próxima pergunta após pelo menos esse número de jogadores responderem (e houver consenso de maioria). Deixe em branco para não exigir mínimo.
+              </p>
+              <input
+                type="number"
+                value={minPlayers}
+                onChange={(e) => setMinPlayers(e.target.value)}
+                placeholder="Ex: 3"
+                min="1"
+                max="50"
+                className="w-40 px-4 py-2 bg-gray-50 dark:bg-dark-elevated border border-gray-300 dark:border-dark-border rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-900 dark:text-dark-text-primary placeholder-gray-400 dark:placeholder-gray-500"
+              />
+            </div>
+          </div>
 
           {/* End Screen Configuration */}
           <div className="bg-white dark:bg-dark-surface border border-gray-200 dark:border-dark-border rounded-xl p-6">

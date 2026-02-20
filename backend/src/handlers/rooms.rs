@@ -29,18 +29,16 @@ fn extract_user_id(req: &HttpRequest) -> Option<i32> {
     req.extensions().get::<i32>().copied()
 }
 
-// Atribuir cor ao jogador baseada no número de participantes
-async fn assign_player_color(room_id: i32, pool: &PgPool) -> String {
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM room_participants WHERE room_id = $1"
-    )
-    .bind(room_id)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
-    
-    let index = (count as usize) % PLAYER_COLORS.len();
+// Atribuir cor ao jogador baseada no user_id (determinístico, sem race condition)
+fn assign_player_color(user_id: i32) -> String {
+    let index = (user_id as usize) % PLAYER_COLORS.len();
     PLAYER_COLORS[index].to_string()
+}
+
+// Atribuir cor a jogador anônimo baseada no hash do session_id (sem race condition)
+fn assign_player_color_anon(session_id: &str) -> String {
+    let hash: usize = session_id.bytes().fold(0usize, |acc, b| acc.wrapping_add(b as usize));
+    PLAYER_COLORS[hash % PLAYER_COLORS.len()].to_string()
 }
 
 // Helper para buscar usuário
@@ -206,8 +204,8 @@ pub async fn create_room(
 
     match room {
         Ok(room) => {
-            // Atribuir cor ao criador
-            let color = assign_player_color(room.id, pool.get_ref()).await;
+            // Atribuir cor ao criador baseada no user_id (sem race condition)
+            let color = assign_player_color(user.id);
             
             // Adicionar criador como participante e host
             let _ = sqlx::query(
@@ -305,14 +303,14 @@ pub async fn join_room(
         }));
     }
 
-    // Atribuir cor ao novo participante
-    let color = assign_player_color(room.id, pool.get_ref()).await;
+    // Atribuir cor ao novo participante baseada no user_id (sem race condition)
+    let color = assign_player_color(user.id);
 
     // Adicionar participante
     let result = sqlx::query_as::<_, RoomParticipant>(
         "INSERT INTO room_participants (room_id, user_id, is_host, player_color)
          VALUES ($1, $2, false, $3)
-         ON CONFLICT (room_id, user_id) DO UPDATE SET joined_at = NOW()
+         ON CONFLICT (room_id, user_id) DO UPDATE SET player_color = EXCLUDED.player_color, joined_at = NOW()
          RETURNING *"
     )
     .bind(room.id)
@@ -493,11 +491,8 @@ pub async fn join_room_anonymous(
     // Gerar session_id único
     let session_id = generate_session_id();
 
-    // Atribuir cor ao jogador baseada em conexões ativas
-    let player_color = {
-        let index = active_connections % PLAYER_COLORS.len();
-        PLAYER_COLORS[index].to_string()
-    };
+    // Atribuir cor ao jogador anônimo pelo hash do session_id (sem race condition)
+    let player_color = assign_player_color_anon(&session_id);
 
     // Adicionar participante anônimo (opcional, apenas para histórico)
     let result = sqlx::query(

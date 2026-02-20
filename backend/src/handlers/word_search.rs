@@ -45,8 +45,8 @@ pub async fn create_word_search_config(
     }
 
     let result = sqlx::query_as::<_, WordSearchConfig>(
-        "INSERT INTO word_search_configs (game_id, grid_size, words, time_limit, allowed_directions, concepts) 
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *"
+        "INSERT INTO word_search_configs (game_id, grid_size, words, time_limit, allowed_directions, concepts, hide_words) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *"
     )
     .bind(body.game_id)
     .bind(body.grid_size)
@@ -54,6 +54,7 @@ pub async fn create_word_search_config(
     .bind(body.time_limit)
     .bind(&body.allowed_directions)
     .bind(&body.concepts)
+    .bind(body.hide_words.unwrap_or(false))
     .fetch_one(pool.get_ref())
     .await;
 
@@ -123,8 +124,8 @@ pub async fn update_word_search_config(
 
     let result = sqlx::query_as::<_, WordSearchConfig>(
         "UPDATE word_search_configs 
-         SET grid_size = $1, words = $2, time_limit = $3, allowed_directions = $4, concepts = $5 
-         WHERE game_id = $6 
+         SET grid_size = $1, words = $2, time_limit = $3, allowed_directions = $4, concepts = $5, hide_words = $6 
+         WHERE game_id = $7 
          RETURNING *"
     )
     .bind(body.grid_size)
@@ -132,6 +133,7 @@ pub async fn update_word_search_config(
     .bind(body.time_limit)
     .bind(&body.allowed_directions)
     .bind(&body.concepts)
+    .bind(body.hide_words.unwrap_or(false))
     .bind(game_id_value)
     .fetch_one(pool.get_ref())
     .await;

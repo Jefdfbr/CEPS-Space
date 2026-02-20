@@ -16,6 +16,7 @@ pub struct CreateQuizConfigRequest {
     pub end_screen_button_text: Option<String>,
     pub end_screen_button_url: Option<String>,
     pub end_screen_button_new_tab: Option<bool>,
+    pub min_players: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Validate)]
@@ -71,7 +72,7 @@ pub async fn create_quiz_config(
 
     // Create quiz config
     let config = match sqlx::query_as::<_, QuizConfig>(
-        "INSERT INTO quiz_configs (game_id, time_limit, end_screen_text, end_screen_button_text, end_screen_button_url, end_screen_button_new_tab) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *"
+        "INSERT INTO quiz_configs (game_id, time_limit, end_screen_text, end_screen_button_text, end_screen_button_url, end_screen_button_new_tab, min_players) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *"
     )
     .bind(body.game_id)
     .bind(body.time_limit)
@@ -79,6 +80,7 @@ pub async fn create_quiz_config(
     .bind(&body.end_screen_button_text)
     .bind(&body.end_screen_button_url)
     .bind(body.end_screen_button_new_tab)
+    .bind(body.min_players)
     .fetch_one(pool.get_ref())
     .await {
         Ok(c) => c,
@@ -206,6 +208,7 @@ pub struct UpdateQuizConfigRequest {
     pub end_screen_button_text: Option<String>,
     pub end_screen_button_url: Option<String>,
     pub end_screen_button_new_tab: Option<bool>,
+    pub min_players: Option<i32>,
 }
 
 pub async fn update_quiz_config(
@@ -254,14 +257,16 @@ pub async fn update_quiz_config(
          SET end_screen_text = $1, 
              end_screen_button_text = $2, 
              end_screen_button_url = $3,
-             end_screen_button_new_tab = $4
-         WHERE game_id = $5 
+             end_screen_button_new_tab = $4,
+             min_players = $5
+         WHERE game_id = $6 
          RETURNING *"
     )
     .bind(&body.end_screen_text)
     .bind(&body.end_screen_button_text)
     .bind(&body.end_screen_button_url)
     .bind(body.end_screen_button_new_tab)
+    .bind(body.min_players)
     .bind(*game_id)
     .fetch_one(pool.get_ref())
     .await {

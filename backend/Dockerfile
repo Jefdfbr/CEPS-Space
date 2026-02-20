@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY --from=builder /app/target/release/jogos-educativos-backend /app/backend
-COPY .env /app/.env
 
 EXPOSE 8080
 

@@ -1,7 +1,7 @@
 use actix_web::{web, HttpRequest, HttpResponse, Error, HttpMessage};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 
 // ============= MODELS =============
 
@@ -21,7 +21,7 @@ pub struct QuestionResponse {
     pub question_text: String,
     pub order_index: i32,
     pub is_open: bool,
-    pub created_at: NaiveDateTime,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,8 +30,8 @@ pub struct GameWithQuestionsResponse {
     pub title: String,
     pub description: Option<String>,
     pub questions: Vec<QuestionResponse>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,7 +49,7 @@ pub struct ResponseData {
     pub response_text: String,
     pub player_name: Option<String>,
     pub room_name: Option<String>,
-    pub created_at: NaiveDateTime,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -122,8 +122,8 @@ pub async fn create_game(
     })?;
     
     let game_id: i32 = game_row.get("id");
-    let created_at: NaiveDateTime = game_row.get("created_at");
-    let updated_at: NaiveDateTime = game_row.get("updated_at");
+    let created_at: DateTime<Utc> = game_row.get("created_at");
+    let updated_at: DateTime<Utc> = game_row.get("updated_at");
     
     // Inserir as perguntas
     for (index, question_text) in body.questions.iter().enumerate() {
@@ -935,8 +935,8 @@ pub async fn get_game_for_edit(
         "game_password": game_row.get::<String, _>("game_password"),
         "presenter_password": game_row.get::<String, _>("presenter_password"),
         "questions": questions,
-        "created_at": game_row.get::<NaiveDateTime, _>("created_at"),
-        "updated_at": game_row.get::<NaiveDateTime, _>("updated_at"),
+        "created_at": game_row.get::<DateTime<Utc>, _>("created_at"),
+        "updated_at": game_row.get::<DateTime<Utc>, _>("updated_at"),
     })))
 }
 

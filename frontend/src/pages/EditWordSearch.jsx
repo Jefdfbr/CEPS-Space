@@ -14,6 +14,8 @@ const EditWordSearch = () => {
   const [showConceptInput, setShowConceptInput] = useState(false);
   const [currentConcept, setCurrentConcept] = useState('');
   const [editingWordConcept, setEditingWordConcept] = useState(null);
+  const [editingWord, setEditingWord] = useState(null);       // palavra sendo renomeada
+  const [editingWordValue, setEditingWordValue] = useState(''); // valor temporário
   const [gridSize, setGridSize] = useState(15);
   const [showPreview, setShowPreview] = useState(false);
   const [previewGrid, setPreviewGrid] = useState([]);
@@ -24,6 +26,7 @@ const EditWordSearch = () => {
   const [endScreenButtonUrl, setEndScreenButtonUrl] = useState('');
   const [endScreenButtonNewTab, setEndScreenButtonNewTab] = useState(true);
   const [showEndScreenButton, setShowEndScreenButton] = useState(false);
+  const [hideWords, setHideWords] = useState(false);
   const [selectedDirections, setSelectedDirections] = useState({
     up: true,
     down: true,
@@ -71,6 +74,9 @@ const EditWordSearch = () => {
       if (config.concepts) {
         setConcepts(config.concepts);
       }
+
+      // Carregar opção esconder palavras
+      setHideWords(config.hide_words || false);
       
       // Carregar direções permitidas
       if (config.allowed_directions) {
@@ -167,6 +173,39 @@ const EditWordSearch = () => {
   const cancelEditingConcept = () => {
     setEditingWordConcept(null);
     setCurrentConcept('');
+  };
+
+  const startEditingWord = (word) => {
+    setEditingWord(word);
+    setEditingWordValue(word);
+    // Fechar modo de edição de conceito se estiver aberto
+    setEditingWordConcept(null);
+    setCurrentConcept('');
+  };
+
+  const saveEditingWord = (oldWord) => {
+    const newWord = editingWordValue.trim().toUpperCase();
+    if (!newWord) { alert('Digite uma palavra válida'); return; }
+    if (newWord.length < 3) { alert('A palavra deve ter pelo menos 3 letras'); return; }
+    if (newWord.length > gridSize) { alert(`A palavra não pode ter mais de ${gridSize} letras`); return; }
+    if (!/^[A-Z]+$/.test(newWord)) { alert('Use apenas letras (sem acentos ou números)'); return; }
+    if (newWord !== oldWord && words.includes(newWord)) { alert('Esta palavra já existe'); return; }
+
+    setWords(prev => prev.map(w => (w === oldWord ? newWord : w)));
+    // Migrar conceito para a nova chave
+    if (concepts[oldWord] !== undefined) {
+      const updated = { ...concepts };
+      updated[newWord] = updated[oldWord];
+      delete updated[oldWord];
+      setConcepts(updated);
+    }
+    setEditingWord(null);
+    setEditingWordValue('');
+  };
+
+  const cancelEditingWord = () => {
+    setEditingWord(null);
+    setEditingWordValue('');
   };
 
   const generateGrid = () => {
@@ -298,6 +337,7 @@ const EditWordSearch = () => {
         time_limit: null,
         allowed_directions: allowedDirections,
         concepts: concepts,
+        hide_words: hideWords,
       });
 
       // Mostrar toast de sucesso
@@ -522,27 +562,57 @@ const EditWordSearch = () => {
         {/* Palavras */}
         <div className="space-y-6">
           <div className="bg-white dark:bg-dark-elevated rounded-lg shadow-lg p-6">
-            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-dark-text-primary">
+            <h2 className="text-xl font-semibold mb-1 text-gray-800 dark:text-dark-text-primary">
               Palavras ({words.length})
             </h2>
+            <p className="text-sm text-gray-500 dark:text-dark-text-secondary mb-4">
+              Adicione palavras com letras de A–Z (sem acentos).
+            </p>
 
-            <div className="flex gap-2 mb-4">
-              <input
-                type="text"
-                value={currentWord}
-                onChange={(e) => setCurrentWord(e.target.value.toUpperCase())}
-                onKeyPress={(e) => e.key === 'Enter' && addWord()}
-                placeholder="Digite uma palavra"
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-dark-text-primary"
-                maxLength={gridSize}
-              />
-              <button
-                onClick={addWord}
-                className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg flex items-center gap-2 transition-colors"
-              >
-                <Plus className="w-5 h-5" />
-                Adicionar
-              </button>
+            {/* Esconder Palavras — visível só quando todas as palavras têm descrição */}
+            {words.length > 0 && words.every(w => concepts[w.toUpperCase()]) && (
+              <div className="flex items-start gap-3 mb-5 p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-lg">
+                <input
+                  type="checkbox"
+                  id="hideWords"
+                  checked={hideWords}
+                  onChange={(e) => setHideWords(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 text-blue-600 bg-gray-100 dark:bg-dark-elevated border-gray-300 dark:border-gray-600 rounded focus:ring-blue-500"
+                />
+                <div>
+                  <label htmlFor="hideWords" className="text-sm font-semibold text-purple-900 dark:text-purple-200 cursor-pointer">
+                    🫣 Esconder Palavras
+                  </label>
+                  <p className="text-xs text-purple-700 dark:text-purple-300 mt-0.5">
+                    O nome de cada palavra ficará desfocado e ilegível. O jogador lê a descrição para descobrir a palavra no grid. Ao encontrá-la, o nome é revelado.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Nova Palavra */}
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-gray-700 dark:text-dark-text-primary mb-2">
+                Nova palavra
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={currentWord}
+                  onChange={(e) => setCurrentWord(e.target.value.toUpperCase())}
+                  onKeyPress={(e) => e.key === 'Enter' && addWord()}
+                  placeholder="Ex: MITOCONDRIA"
+                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-dark-text-primary"
+                  maxLength={gridSize}
+                />
+                <button
+                  onClick={addWord}
+                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg flex items-center gap-2 transition-colors"
+                >
+                  <Plus className="w-5 h-5" />
+                  Adicionar
+                </button>
+              </div>
             </div>
 
             <div className="mb-4">
@@ -577,7 +647,35 @@ const EditWordSearch = () => {
                   key={index}
                   className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg"
                 >
-                  {editingWordConcept === word ? (
+                  {editingWord === word ? (
+                    // Modo de renomear a palavra
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editingWordValue}
+                        onChange={(e) => setEditingWordValue(e.target.value.toUpperCase())}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEditingWord(word);
+                          if (e.key === 'Escape') cancelEditingWord();
+                        }}
+                        maxLength={gridSize}
+                        autoFocus
+                        className="flex-1 px-3 py-1.5 border border-blue-400 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-600 dark:text-dark-text-primary font-medium text-sm"
+                      />
+                      <button
+                        onClick={() => saveEditingWord(word)}
+                        className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded text-sm transition-colors"
+                      >
+                        Salvar
+                      </button>
+                      <button
+                        onClick={cancelEditingWord}
+                        className="px-3 py-1 bg-gray-500 hover:bg-gray-600 text-white rounded text-sm transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : editingWordConcept === word ? (
                     // Modo de edição
                     <div className="space-y-2">
                       <div className="flex items-center justify-between mb-2">
@@ -617,6 +715,13 @@ const EditWordSearch = () => {
                           {word}
                         </span>
                         <div className="flex gap-2">
+                          <button
+                            onClick={() => startEditingWord(word)}
+                            className="px-2 py-1 text-xs bg-gray-500 hover:bg-gray-600 text-white rounded transition-colors"
+                            title="Editar palavra"
+                          >
+                            Editar
+                          </button>
                           <button
                             onClick={() => startEditingConcept(word)}
                             className="px-2 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"

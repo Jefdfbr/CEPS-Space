@@ -96,6 +96,7 @@ pub struct WordSearchConfig {
     pub time_limit: Option<i32>,
     pub allowed_directions: Option<serde_json::Value>,
     pub concepts: Option<serde_json::Value>,
+    pub hide_words: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -109,6 +110,7 @@ pub struct CreateWordSearchRequest {
     pub time_limit: Option<i32>,
     pub allowed_directions: Option<serde_json::Value>,
     pub concepts: Option<serde_json::Value>,
+    pub hide_words: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -120,6 +122,7 @@ pub struct QuizConfig {
     pub end_screen_button_text: Option<String>,
     pub end_screen_button_url: Option<String>,
     pub end_screen_button_new_tab: Option<bool>,
+    pub min_players: Option<i32>,
     pub created_at: DateTime<Utc>,
 }
 

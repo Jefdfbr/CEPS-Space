@@ -108,7 +108,11 @@ const Register = () => {
       await register(email, password, name);
       navigate('/login');
     } catch (err) {
-      setError(err.response?.data?.error || 'Erro ao fazer cadastro');
+      console.error('Erro completo:', err);
+      console.error('Resposta:', err.response);
+      console.error('Data:', err.response?.data);
+      const errorMsg = err.response?.data?.error || err.message || 'Erro ao fazer cadastro';
+      setError(errorMsg);
     } finally {
       setLoading(false);
     }

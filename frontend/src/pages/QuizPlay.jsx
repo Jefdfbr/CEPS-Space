@@ -178,16 +178,23 @@ function QuizPlay() {
     const sessionId = localStorage.getItem('session_id');
     const token = localStorage.getItem('token');
     
-    if (sessionId) {
+    if (token) {
+      // Para usuários autenticados: decodificar o JWT e usar o campo 'sub' (user_id real)
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        if (payload.sub) {
+          myPlayerIdRef.current = payload.sub;
+        }
+      } catch (e) {
+        // fallback ignorado
+      }
+    } else if (sessionId) {
       // Gerar ID único usando MESMA LÓGICA do backend: wrapping_add
       let hash = 0;
       for (let i = 0; i < sessionId.length; i++) {
         hash = (hash + sessionId.charCodeAt(i)) | 0; // wrapping_add em JS
       }
       myPlayerIdRef.current = (Math.abs(hash) % 1000000) + 1;
-    } else if (token) {
-      // Para usuários logados, usar um ID baseado no token
-      myPlayerIdRef.current = parseInt(token.substring(0, 8), 16) || Math.floor(Math.random() * 1000000);
     }
     
     // NÃO adicionar manualmente - deixar o backend enviar PlayerJoined
@@ -365,6 +372,7 @@ function QuizPlay() {
   const getConsensus = () => {
     if (!roomId) return null; // Modo solo, sem consenso necessário
     
+    const minRequired = quizConfig?.min_players || 0;
     const questionVotes = votes[currentQuestionIndex] || {};
     
     // Contar total de jogadores que votaram (unique player_ids)
@@ -376,6 +384,9 @@ function QuizPlay() {
     const totalPlayers = connectedPlayers.length;
     const totalVoters = allVoters.size;
     const allAnswered = totalVoters === totalPlayers && totalPlayers > 0;
+
+    // Verificar mínimo de respostas obrigatórias
+    if (minRequired > 0 && totalVoters < minRequired) return null;
     
     // Verificar se há maioria absoluta (mais da metade votou na mesma resposta)
     for (const [answer, voters] of Object.entries(questionVotes)) {
@@ -848,11 +859,14 @@ function QuizPlay() {
                       });
                       const answered = allVoters.size;
                       const total = connectedPlayers.length;
-                      
-                      if (answered === total && total > 0) {
+                      const minRequired = quizConfig?.min_players || 0;
+
+                      if (minRequired > 0 && answered < minRequired) {
+                        return <span>Aguardando respostas... ({answered}/{total} responderam — mínimo exigido: {minRequired})</span>;
+                      } else if (answered === total && total > 0) {
                         return <span className="font-semibold">⚠️ Todos responderam ({answered}/{total}), mas é necessário maioria votar na mesma resposta!</span>;
                       } else {
-                        return <span>Aguardando respostas... ({answered}/{total} responderam)</span>;
+                        return <span>Aguardando respostas... ({answered}/{total} responderam{minRequired > 0 ? ` — mínimo: ${minRequired}` : ''})</span>;
                       }
                     })()}
                   </span>
