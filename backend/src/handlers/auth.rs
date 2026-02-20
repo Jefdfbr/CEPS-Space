@@ -73,7 +73,7 @@ pub async fn login(
     .await {
         Ok(u) => u,
         Err(_) => return HttpResponse::Unauthorized().json(ErrorResponse {
-            error: "Invalid credentials".to_string(),
+            error: "Credenciais inválidas".to_string(),
         }),
     };
 
@@ -86,7 +86,7 @@ pub async fn login(
 
     if !valid {
         return HttpResponse::Unauthorized().json(ErrorResponse {
-            error: "Invalid credentials".to_string(),
+            error: "Credenciais inválidas".to_string(),
         });
     }
 
