@@ -65,12 +65,16 @@ function QuizPlay() {
         // Registrar voto
         setVotes(prev => {
           const questionVotes = prev[message.question_index] || {};
-          const answerVotes = questionVotes[message.answer] || [];
           
+          // Usar session_id como chave única do votante (evita colisão de hash com muitos jogadores)
+          const voterKey = message.session_id || String(message.player_id);
+
           // Remover voto anterior deste jogador em outras opções
           const newQuestionVotes = {};
           Object.keys(questionVotes).forEach(ans => {
-            newQuestionVotes[ans] = questionVotes[ans].filter(p => p.player_id !== message.player_id);
+            newQuestionVotes[ans] = questionVotes[ans].filter(
+              p => (p.session_id || String(p.player_id)) !== voterKey
+            );
           });
           
           // Adicionar novo voto
@@ -79,6 +83,7 @@ function QuizPlay() {
           }
           newQuestionVotes[message.answer].push({
             player_id: message.player_id,
+            session_id: message.session_id,
             player_name: message.player_name
           });
           
@@ -96,12 +101,17 @@ function QuizPlay() {
         questionStartTimeRef.current = elapsedTime;
         break;
       
-      case 'QuizTimerSync':
-        // Sincronizar timer com outros jogadores (apenas se for de outro player)
-        if (message.player_id !== myPlayerIdRef.current) {
+      case 'QuizTimerSync': {
+        // Sincronizar timer apenas se for de OUTRO jogador (filtrar pela session_id, não pelo hash)
+        const mySessionId = localStorage.getItem('session_id');
+        const isOwnSync = message.session_id
+          ? message.session_id === mySessionId
+          : message.player_id === myPlayerIdRef.current;
+        if (!isOwnSync) {
           setElapsedTime(message.elapsed_time);
         }
         break;
+      }
       
       case 'QuizCurrentQuestion':
         // Sincronizar questão atual quando reconectar
@@ -375,10 +385,10 @@ function QuizPlay() {
     const minRequired = quizConfig?.min_players || 0;
     const questionVotes = votes[currentQuestionIndex] || {};
     
-    // Contar total de jogadores que votaram (unique player_ids)
+    // Contar total de jogadores que votaram (unique por session_id, fallback para player_id)
     const allVoters = new Set();
     Object.values(questionVotes).forEach(voters => {
-      voters.forEach(voter => allVoters.add(voter.player_id));
+      voters.forEach(voter => allVoters.add(voter.session_id || String(voter.player_id)));
     });
     
     const totalPlayers = connectedPlayers.length;

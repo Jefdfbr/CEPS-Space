@@ -1681,19 +1681,38 @@ pub async fn reset_room(
     }
     log::info!("Quiz progress deleted for room {}", room_id);
 
-    // Resetar respostas do caça-palavras
-    let delete_answers = sqlx::query("DELETE FROM room_answers WHERE room_id = $1")
-        .bind(*room_id)
-        .execute(pool.get_ref())
-        .await;
+    // Resetar respostas do caça-palavras (compatível com schemas legados sem a tabela)
+    let room_answers_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'room_answers')"
+    )
+    .fetch_one(pool.get_ref())
+    .await;
 
-    if let Err(e) = delete_answers {
-        log::error!("Failed to delete room answers for room {}: {}", room_id, e);
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "error": format!("Failed to delete room answers: {}", e)
-        }));
+    match room_answers_exists {
+        Ok(true) => {
+            let delete_answers = sqlx::query("DELETE FROM room_answers WHERE room_id = $1")
+                .bind(*room_id)
+                .execute(pool.get_ref())
+                .await;
+
+            if let Err(e) = delete_answers {
+                log::error!("Failed to delete room answers for room {}: {}", room_id, e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to delete room answers: {}", e)
+                }));
+            }
+            log::info!("Room answers deleted for room {}", room_id);
+        }
+        Ok(false) => {
+            log::warn!("Table room_answers does not exist; skipping cleanup for room {}", room_id);
+        }
+        Err(e) => {
+            log::error!("Failed to check room_answers table existence for room {}: {}", room_id, e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to check room answers table: {}", e)
+            }));
+        }
     }
-    log::info!("Room answers deleted for room {}", room_id);
 
     // Resetar palavras encontradas do caça-palavras
     let delete_found_words = sqlx::query("DELETE FROM room_found_words WHERE room_id = $1")

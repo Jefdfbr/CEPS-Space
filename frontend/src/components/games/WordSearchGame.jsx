@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Clock, Star, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, Trophy, EyeOff } from 'lucide-react';
+import { Clock, Star, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ZoomIn, Trophy, EyeOff, ArrowRight, ArrowLeft, ArrowUp, ArrowDown, ArrowUpRight, ArrowUpLeft, ArrowDownRight, ArrowDownLeft } from 'lucide-react';
 import { useRoomWebSocket } from '../../hooks/useRoomWebSocket';
 import axios from 'axios';
 
@@ -43,6 +43,22 @@ const seededRandom = (seed) => {
 };
 
 const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor, myPlayerId }) => {
+  const directionLegend = {
+    right: { label: 'Direita', icon: ArrowRight },
+    left: { label: 'Esquerda', icon: ArrowLeft },
+    down: { label: 'Baixo', icon: ArrowDown },
+    up: { label: 'Cima', icon: ArrowUp },
+    downRight: { label: 'Diagonal ↘', icon: ArrowDownRight },
+    downLeft: { label: 'Diagonal ↙', icon: ArrowDownLeft },
+    upRight: { label: 'Diagonal ↗', icon: ArrowUpRight },
+    upLeft: { label: 'Diagonal ↖', icon: ArrowUpLeft },
+  };
+
+  const defaultDirections = ['right', 'left', 'down', 'up', 'downRight', 'downLeft', 'upRight', 'upLeft'];
+  const allowedDirections = (gameConfig?.allowed_directions?.length ? gameConfig.allowed_directions : defaultDirections)
+    .map((key) => directionLegend[key])
+    .filter(Boolean);
+
   const [grid, setGrid] = useState([]);
   const [words, setWords] = useState([]);
   const [foundWords, setFoundWords] = useState(new Set()); // Todas as palavras encontradas (todos os jogadores)
@@ -77,9 +93,14 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor,
   const handleWebSocketMessage = (message) => {
     
     if (message.type === 'WordFound') {
-      // Ignorar mensagens do próprio jogador usando player_id (mais confiável que cor)
-      const isOwnMessage = myPlayerId != null && message.player_id != null &&
-                           message.player_id.toString() === myPlayerId.toString();
+      // Ignorar mensagens do próprio jogador.
+      // Prioridade 1: comparar session_id (anônimos e autenticados) — sem risco de hash collision
+      // Prioridade 2: comparar player_id numérico como fallback para mensagens antigas
+      const mySessionId = localStorage.getItem('session_id');
+      const sessionMatch  = mySessionId != null && message.session_id != null && message.session_id === mySessionId;
+      const playerIdMatch = !mySessionId && myPlayerId != null && message.player_id != null &&
+                            message.player_id.toString() === myPlayerId.toString();
+      const isOwnMessage  = sessionMatch || playerIdMatch;
       
       if (!isOwnMessage) {
         
@@ -1191,7 +1212,23 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor,
                 </h4>
                 <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-1">
                   <li>• Clique e arraste para selecionar palavras</li>
-                  <li>• Palavras podem estar em qualquer direção</li>
+                  <li>
+                    • Palavras podem estar nos sentidos:
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {allowedDirections.map((direction) => {
+                        const Icon = direction.icon;
+                        return (
+                          <span
+                            key={direction.label}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                          >
+                            <Icon className="w-3.5 h-3.5" />
+                            <span>{direction.label}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </li>
                   <li>• Quanto mais rápido, mais pontos!</li>
                   {gameConfig?.concepts && Object.keys(gameConfig.concepts).length > 0 && (
                     <li>• Clique nas palavras encontradas para ver os conceitos e aprender mais</li>
@@ -1313,7 +1350,23 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor,
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-blue-600 dark:text-blue-400 font-bold">•</span>
-                    <span>Palavras podem estar em qualquer direção</span>
+                    <span>
+                      Palavras podem estar nos sentidos:
+                      <span className="mt-2 flex flex-wrap gap-2">
+                        {allowedDirections.map((direction) => {
+                          const Icon = direction.icon;
+                          return (
+                            <span
+                              key={direction.label}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                            >
+                              <Icon className="w-3.5 h-3.5" />
+                              <span>{direction.label}</span>
+                            </span>
+                          );
+                        })}
+                      </span>
+                    </span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-blue-600 dark:text-blue-400 font-bold">•</span>

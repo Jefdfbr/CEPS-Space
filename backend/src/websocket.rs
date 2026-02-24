@@ -4,6 +4,10 @@ use actix_web_actors::ws;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const CLIENT_TIMEOUT: Duration    = Duration::from_secs(70);
 
 // Mensagens do WebSocket
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +22,10 @@ pub enum WsMessage {
         player_color: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         player_name: Option<String>,
+        /// session_id do remetente — usado pelo frontend para filtrar a própria mensagem
+        /// sem depender de hash numérico (evita colisões com muitos jogadores)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(rename = "foundAt")]
         found_at: Option<i32>,  // Tempo em segundos quando a palavra foi encontrada
@@ -27,6 +35,9 @@ pub enum WsMessage {
         answer: String,
         player_id: i32,
         player_name: String,
+        /// session_id injetado pelo servidor — chave única para deduplicação de votos
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     QuizConsensus {
         question_index: i32,
@@ -40,10 +51,14 @@ pub enum WsMessage {
     QuizTimerSync {
         elapsed_time: i32,  // Tempo decorrido em segundos
         player_id: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     QuizCurrentQuestion {
         question_index: i32,
         player_id: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     QuizFinished {
         player_id: i32,
@@ -130,6 +145,8 @@ pub struct GameWebSocket {
     pub session_id: String,
     pub room_manager: RoomManager,
     pub pool: sqlx::PgPool,
+    /// Último heartbeat recebido do cliente
+    pub last_heartbeat: Instant,
 }
 
 impl Actor for GameWebSocket {
@@ -137,6 +154,21 @@ impl Actor for GameWebSocket {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         log::info!("WebSocket started for user {} in room {}", self.user_id, self.room_id);
+
+        // Heartbeat: pinga o cliente a cada HEARTBEAT_INTERVAL.
+        // Se o cliente não responder em CLIENT_TIMEOUT, o actor é parado,
+        // o que aciona stopped() e remove a conexão do RoomManager.
+        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
+            if Instant::now().duration_since(act.last_heartbeat) > CLIENT_TIMEOUT {
+                log::warn!(
+                    "⏱️  Heartbeat timeout: user {} room {} — encerrando conexão",
+                    act.user_id, act.room_id
+                );
+                ctx.stop();
+                return;
+            }
+            ctx.ping(b"");
+        });
         
         // Adicionar à lista de conexões da sala e coletar lista de jogadores existentes
         let (was_empty, existing_players) = {
@@ -279,7 +311,13 @@ impl Actor for GameWebSocket {
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
-            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
+            Ok(ws::Message::Ping(msg)) => {
+                self.last_heartbeat = Instant::now();
+                ctx.pong(&msg);
+            },
+            Ok(ws::Message::Pong(_)) => {
+                self.last_heartbeat = Instant::now();
+            },
             Ok(ws::Message::Text(text)) => {
                 log::info!("Received WebSocket text message: {}", text);
                 // Parse mensagem recebida
@@ -287,7 +325,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                     Ok(mut ws_msg) => {
                         log::info!("Parsed WS message: {:?}", ws_msg);
                     
-                    // Adicionar player_id e player_color nas mensagens WordFound
+                    // Adicionar player_id, player_color e session_id nas mensagens WordFound
                     ws_msg = match ws_msg {
                         WsMessage::WordFound { word, cells, found_at, .. } => {
                             let word_msg = WsMessage::WordFound {
@@ -296,6 +334,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                                 player_id: Some(self.user_id),
                                 player_color: Some(self.player_color.clone()),
                                 player_name: Some(self.username.clone()),
+                                session_id: Some(self.session_id.clone()),
                                 found_at,
                             };
                             
@@ -393,12 +432,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                             
                             word_msg
                         },
-                        WsMessage::QuizAnswer { question_index, answer, player_id, player_name } => {
+                        WsMessage::QuizAnswer { question_index, answer, player_id, player_name, .. } => {
                             let quiz_msg = WsMessage::QuizAnswer {
                                 question_index,
                                 answer: answer.clone(),
                                 player_id,
                                 player_name: player_name.clone(),
+                                // Injetar session_id do remetente (sobrescreve qualquer valor enviado pelo cliente)
+                                session_id: Some(self.session_id.clone()),
                             };
                             
                             // Processar votação do quiz
@@ -425,12 +466,21 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                             quiz_msg
                         },
                         WsMessage::QuizAdvance { question_index } => {
-                            // Repassar sinal de avanço para todos
                             WsMessage::QuizAdvance { question_index }
                         },
-                        WsMessage::QuizTimerSync { elapsed_time, player_id } => {
-                            // Repassar sincronização de timer para todos
-                            WsMessage::QuizTimerSync { elapsed_time, player_id }
+                        WsMessage::QuizTimerSync { elapsed_time, player_id, .. } => {
+                            WsMessage::QuizTimerSync {
+                                elapsed_time,
+                                player_id,
+                                session_id: Some(self.session_id.clone()),
+                            }
+                        },
+                        WsMessage::QuizCurrentQuestion { question_index, player_id, .. } => {
+                            WsMessage::QuizCurrentQuestion {
+                                question_index,
+                                player_id,
+                                session_id: Some(self.session_id.clone()),
+                            }
                         },
                         other => other,
                     };
@@ -454,26 +504,55 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
 }
 
 impl GameWebSocket {
-    fn broadcast(&self, message: WsMessage, exclude_user: Option<i32>) {
-        let manager = self.room_manager.lock().unwrap();
-        if let Some(connections) = manager.get(&self.room_id) {
-            let text = serde_json::to_string(&message).unwrap();
-            
-            log::info!("🔊 Broadcasting to room {}: {} connections. Message type: {:?}", 
-                self.room_id, connections.len(), message);
-            
-            // Enviar para todos os jogadores na sala
-            for (index, conn_info) in connections.iter().enumerate() {
-                log::info!("📤 Enviando para conexão {} da sala {}", index, self.room_id);
-                conn_info.addr.do_send(SendMessage {
-                    text: text.clone(),
-                });
+    fn broadcast(&self, message: WsMessage, _exclude_user: Option<i32>) {
+        let text = serde_json::to_string(&message).unwrap();
+
+        // Coletar endereços enquanto o lock está aberto, soltá-lo antes de enviar
+        // (evita deadlock se o Handler<SendMessage> precisar do lock)
+        let addrs: Vec<(Addr<GameWebSocket>, String)> = {
+            let manager = self.room_manager.lock().unwrap();
+            match manager.get(&self.room_id) {
+                Some(connections) => {
+                    log::info!(
+                        "🔊 Broadcasting room {}: {} conexões",
+                        self.room_id, connections.len()
+                    );
+                    connections
+                        .iter()
+                        .map(|c| (c.addr.clone(), c.session_id.clone()))
+                        .collect()
+                }
+                None => {
+                    log::warn!("⚠️ Sala {} não encontrada no manager", self.room_id);
+                    return;
+                }
             }
-            
-            log::info!("✅ Broadcast concluído para {} conexões", connections.len());
-        } else {
-            log::warn!("⚠️ Sala {} não encontrada no manager", self.room_id);
+        }; // lock liberado aqui
+
+        let mut dead_addrs: Vec<Addr<GameWebSocket>> = Vec::new();
+
+        for (addr, _sid) in &addrs {
+            // try_send retorna erro imediatamente se o mailbox estiver fechado
+            if let Err(e) = addr.try_send(SendMessage { text: text.clone() }) {
+                log::warn!("📭 Conexão morta detectada no broadcast da sala {}: {}", self.room_id, e);
+                dead_addrs.push(addr.clone());
+            }
         }
+
+        // Limpar conexões mortas detectadas
+        if !dead_addrs.is_empty() {
+            let mut manager = self.room_manager.lock().unwrap();
+            if let Some(connections) = manager.get_mut(&self.room_id) {
+                let before = connections.len();
+                connections.retain(|c| !dead_addrs.iter().any(|d| *d == c.addr));
+                log::info!(
+                    "🧹 Removidas {} conexões mortas da sala {}. Ficaram: {}",
+                    before - connections.len(), self.room_id, connections.len()
+                );
+            }
+        }
+
+        log::info!("✅ Broadcast concluído para {} conexões", addrs.len() - dead_addrs.len());
     }
 }
 
@@ -645,6 +724,7 @@ pub async fn room_websocket(
         session_id: session_id_str,
         room_manager: room_manager.get_ref().clone(),
         pool: pool.get_ref().clone(),
+        last_heartbeat: Instant::now(),
     };
     
     ws::start(ws, &req, stream)
