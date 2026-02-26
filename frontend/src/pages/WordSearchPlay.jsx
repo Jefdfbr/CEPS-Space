@@ -3,12 +3,25 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import WordSearchGame from '../components/games/WordSearchGame';
 import api from '../services/api';
 
+// Normalizar senha (minúsculas e sem acentos) - igual ao GameAccess
+const normalizarSenha = (senha) => {
+  if (!senha) return '';
+  return senha
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ç/g, 'c')
+    .replace(/Ç/g, 'c');
+};
+
 const WordSearchPlay = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const gameId = searchParams.get('game_id');
   const roomId = searchParams.get('room_id');
   const seed = searchParams.get('seed');
+  const passwordParam = searchParams.get('password');
+  const playerNameParam = searchParams.get('player_name');
   
   const [gameConfig, setGameConfig] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -18,35 +31,111 @@ const WordSearchPlay = () => {
 
   // PROTEÇÃO CRÍTICA - Executa IMEDIATAMENTE antes de qualquer renderização
   useEffect(() => {
-    console.log('🔒 VERIFICAÇÃO DE SEGURANÇA - WordSearchPlay');
-    console.log('gameId:', gameId);
-    console.log('roomId:', roomId);
-    
-    const sessionId = localStorage.getItem('session_id');
-    const token = localStorage.getItem('token');
-    
-    console.log('session_id:', sessionId ? 'EXISTS' : 'NULL');
-    console.log('token:', token ? 'EXISTS' : 'NULL');
+    const checkAuth = async () => {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
 
-    // BLOQUEIO 1: Se tentou acessar SEM game_id, bloquear
-    if (!gameId) {
-      console.error('❌ BLOQUEADO: Sem game_id');
-      alert('❌ Acesso negado!\n\nVocê precisa entrar pelo menu de jogos.');
-      navigate('/games');
-      return;
-    }
+      // BLOQUEIO 1: Se tentou acessar SEM game_id, bloquear
+      if (!gameId) {
+        alert('❌ Acesso negado!\n\nVocê precisa entrar pelo menu de jogos.');
+        navigate('/games');
+        return;
+      }
 
-    // BLOQUEIO 2: Se tem room_id mas não tem autenticação, bloquear
-    if (roomId && !sessionId && !token) {
-      console.error('❌ BLOQUEADO: Tentou entrar em sala sem autenticação');
+      // Já tem autenticação válida (inclusive após redirect interno)
+      if (sessionId || token) {
+        setAuthorized(true);
+        return;
+      }
+
+      // Sem autenticação, mas com senha e nome via GET params → entrar automaticamente
+      if (passwordParam && playerNameParam) {
+        try {
+          let resolvedRoomId = roomId;
+          let roomCode;
+
+          if (resolvedRoomId) {
+            // room_id fornecido: entrar direto nessa sala
+            const roomInfoRes = await api.get(`/rooms/info-by-id/${resolvedRoomId}`);
+            roomCode = roomInfoRes.data.room.room_code;
+            localStorage.setItem('current_room_name', roomInfoRes.data.room.room_name || roomCode);
+          } else {
+            // Sem room_id: buscar salas do jogo e tentar a senha em cada uma
+            const roomsRes = await api.get(`/rooms/by-game/${gameId}`);
+            const activeRooms = roomsRes.data.filter(r => r.is_active);
+            if (activeRooms.length === 0) {
+              // Nenhuma sala ativa → modo solo
+              setAuthorized(true);
+              return;
+            }
+            let matched = null;
+            for (const room of activeRooms) {
+              try {
+                const testRes = await api.post('/rooms/join-anonymous', {
+                  room_code: room.room_code,
+                  password: normalizarSenha(passwordParam),
+                  player_name: playerNameParam,
+                  existing_session_id: localStorage.getItem('session_id') || undefined,
+                });
+                matched = { room, joinData: testRes.data };
+                break;
+              } catch (_) { continue; }
+            }
+            if (!matched) {
+              navigate(`/game?game_id=${gameId}`);
+              return;
+            }
+            // Salvar sessão e redirecionar com room_id + seed na URL
+            const { session_id, player_color, player_name } = matched.joinData;
+            localStorage.setItem('session_id', session_id);
+            localStorage.setItem('player_name', player_name);
+            localStorage.setItem('player_color', player_color);
+            localStorage.setItem('current_room_name', matched.room.room_name || matched.room.room_code);
+            const roomSeed = matched.room.game_seed || matched.room.room_code;
+            const params = new URLSearchParams({
+              game_id: gameId,
+              room_id: matched.joinData.room_id,
+              seed: roomSeed,
+              password: passwordParam,
+              player_name: playerNameParam,
+            });
+            navigate(`/play/word-search?${params}`, { replace: true });
+            return;
+          }
+
+          const existingSessionId = localStorage.getItem('session_id');
+          const joinRes = await api.post('/rooms/join-anonymous', {
+            room_code: roomCode,
+            password: normalizarSenha(passwordParam),
+            player_name: playerNameParam,
+            existing_session_id: existingSessionId || undefined,
+          });
+
+          const { session_id, player_color, player_name } = joinRes.data;
+          localStorage.setItem('session_id', session_id);
+          localStorage.setItem('player_name', player_name);
+          localStorage.setItem('player_color', player_color);
+
+          setAuthorized(true);
+        } catch (err) {
+          // Senha incorreta ou erro → redirecionar para GameAccess
+          navigate(`/game?game_id=${gameId}`);
+        }
+        return;
+      }
+
+      // Sem room_id e sem senha → modo solo
+      if (!roomId) {
+        setAuthorized(true);
+        return;
+      }
+
+      // Tem room_id mas sem autenticação e sem senha → GameAccess
       navigate(`/game?game_id=${gameId}`);
-      return;
-    }
-    
-    // Se passou por TODAS as verificações, autorizar
-    console.log('✅ ACESSO AUTORIZADO');
-    setAuthorized(true);
-  }, [gameId, roomId, navigate]);
+    };
+
+    checkAuth();
+  }, [gameId, roomId, passwordParam, playerNameParam, navigate]);
 
   // Só carregar o jogo SE estiver autorizado
   useEffect(() => {

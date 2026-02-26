@@ -756,8 +756,9 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor,
     }
 
     // Salvar resultado no banco de dados APENAS se não existir
+    const gameId = gameConfig.game_id || gameConfig.id;
+    let notaFinal = 0;
     try {
-      const gameId = gameConfig.game_id || gameConfig.id;
       const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
       
       // Verificar se já existe resultado salvo
@@ -797,9 +798,11 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor,
           setFinalTime(saveResponse.data.time_seconds);
           setTime(saveResponse.data.time_seconds);
           setScore(saveResponse.data.score);
+          notaFinal = saveResponse.data.score;
         } else {
           // Novo resultado salvo - usar o score calculado pelo backend
           setScore(saveResponse.data.score);
+          notaFinal = saveResponse.data.score;
         }
       } else if (checkResponse.ok) {
         // Já existe resultado - usar o existente
@@ -809,9 +812,22 @@ const WordSearchGame = ({ gameConfig, gameSeed, onComplete, roomId, playerColor,
         setFinalTime(existingResult.time_seconds);
         setTime(existingResult.time_seconds);
         setScore(existingResult.score);
+        notaFinal = existingResult.score;
       }
     } catch (error) {
       // Não bloqueia o jogo se falhar ao salvar
+    }
+
+    // Enviar nota para webhook (somente uma vez por jogo/sala)
+    const submitKey = `nota_enviada_${gameId}_${roomId || 'solo'}`;
+    if (!localStorage.getItem(submitKey)) {
+      try {
+        const playerName = localStorage.getItem('player_name') || 'Anônimo';
+        const sala = localStorage.getItem('current_room_name') || roomId || '';
+        const url = `https://clubevip.space/submit?nota=${notaFinal}&jogador=${encodeURIComponent(playerName)}&sala=${encodeURIComponent(sala)}`;
+        fetch(url, { mode: 'no-cors' }).catch(() => {});
+        localStorage.setItem(submitKey, '1');
+      } catch (_) {}
     }
     
     // Não chamar onComplete no modo multiplayer para não sair do jogo

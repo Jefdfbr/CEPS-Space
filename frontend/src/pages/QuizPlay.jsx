@@ -4,11 +4,25 @@ import { Clock, CheckCircle, XCircle, ArrowRight, Users, FileDown } from 'lucide
 import api from '../services/api';
 import { useRoomWebSocket } from '../hooks/useRoomWebSocket';
 
+// Normalizar senha (minúsculas e sem acentos) - igual ao GameAccess
+const normalizarSenha = (senha) => {
+  if (!senha) return '';
+  return senha
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ç/g, 'c')
+    .replace(/Ç/g, 'c');
+};
+
 function QuizPlay() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const gameId = searchParams.get('game_id');
   const roomId = searchParams.get('room_id');
+  const passwordParam = searchParams.get('password');
+  const playerNameParam = searchParams.get('player_name');
+  const salaParam = searchParams.get('sala');
 
   const [game, setGame] = useState(null);
   const [quizConfig, setQuizConfig] = useState(null);
@@ -32,31 +46,114 @@ function QuizPlay() {
 
   // PROTEÇÃO CRÍTICA - Executa IMEDIATAMENTE antes de qualquer renderização
   useEffect(() => {
-    const sessionId = localStorage.getItem('session_id');
-    const token = localStorage.getItem('token');
+    const checkAuth = async () => {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
 
-    // BLOQUEIO 1: Se tentou acessar SEM game_id, bloquear
-    if (!gameId) {
-      alert('❌ Acesso negado!\n\nVocê precisa entrar pelo menu de jogos.');
-      navigate('/games');
-      return;
-    }
+      // BLOQUEIO 1: Se tentou acessar SEM game_id, bloquear
+      if (!gameId) {
+        alert('❌ Acesso negado!\n\nVocê precisa entrar pelo menu de jogos.');
+        navigate('/games');
+        return;
+      }
 
-    // PERMITIR: Jogar sem sala (modo solo)
-    if (!roomId) {
-      setAuthorized(true);
-      return;
-    }
-    
-    // BLOQUEIO 2: Se tem room_id mas não tem autenticação, bloquear
-    if (roomId && !sessionId && !token) {
+      // Já tem autenticação válida (inclusive após redirect interno)
+      if (sessionId || token) {
+        setAuthorized(true);
+        return;
+      }
+
+      // Sem autenticação, mas com senha e nome via GET params → entrar automaticamente
+      if (passwordParam && playerNameParam) {
+        try {
+          let resolvedRoomId = roomId;
+          let roomCode;
+          let seed;
+
+          if (resolvedRoomId) {
+            // room_id fornecido: entrar direto nessa sala
+            const roomInfoRes = await api.get(`/rooms/info-by-id/${resolvedRoomId}`);
+            roomCode = roomInfoRes.data.room.room_code;
+            seed = roomInfoRes.data.room.game_seed || roomCode;
+            localStorage.setItem('current_room_name', roomInfoRes.data.room.room_name || roomCode);
+          } else {
+            // Sem room_id: buscar salas do jogo e tentar a senha em cada uma
+            const roomsRes = await api.get(`/rooms/by-game/${gameId}`);
+            const activeRooms = roomsRes.data.filter(r => r.is_active);
+            if (activeRooms.length === 0) {
+              // Nenhuma sala ativa → modo solo
+              setAuthorized(true);
+              return;
+            }
+            // Encontrar sala pela senha
+            let matched = null;
+            for (const room of activeRooms) {
+              try {
+                const testRes = await api.post('/rooms/join-anonymous', {
+                  room_code: room.room_code,
+                  password: normalizarSenha(passwordParam),
+                  player_name: playerNameParam,
+                  existing_session_id: localStorage.getItem('session_id') || undefined,
+                });
+                matched = { room, joinData: testRes.data };
+                break;
+              } catch (_) { continue; }
+            }
+            if (!matched) {
+              navigate(`/game?game_id=${gameId}`);
+              return;
+            }
+            // Salvar sessão e redirecionar com room_id + seed na URL
+            const { session_id, player_color, player_name } = matched.joinData;
+            localStorage.setItem('session_id', session_id);
+            localStorage.setItem('player_name', player_name);
+            localStorage.setItem('player_color', player_color);
+            localStorage.setItem('current_room_name', matched.room.room_name || matched.room.room_code);
+            const roomSeed = matched.room.game_seed || matched.room.room_code;
+            const params = new URLSearchParams({
+              game_id: gameId,
+              room_id: matched.joinData.room_id,
+              seed: roomSeed,
+              password: passwordParam,
+              player_name: playerNameParam,
+            });
+            navigate(`/play/quiz?${params}`, { replace: true });
+            return;
+          }
+
+          const existingSessionId = localStorage.getItem('session_id');
+          const joinRes = await api.post('/rooms/join-anonymous', {
+            room_code: roomCode,
+            password: normalizarSenha(passwordParam),
+            player_name: playerNameParam,
+            existing_session_id: existingSessionId || undefined,
+          });
+
+          const { session_id, player_color, player_name } = joinRes.data;
+          localStorage.setItem('session_id', session_id);
+          localStorage.setItem('player_name', player_name);
+          localStorage.setItem('player_color', player_color);
+
+          setAuthorized(true);
+        } catch (err) {
+          // Senha incorreta ou erro → redirecionar para GameAccess
+          navigate(`/game?game_id=${gameId}`);
+        }
+        return;
+      }
+
+      // Sem room_id e sem senha → modo solo ou GameAccess
+      if (!roomId) {
+        setAuthorized(true);
+        return;
+      }
+
+      // Sem autenticação e sem senha via GET → redirecionar para GameAccess
       navigate(`/game?game_id=${gameId}`);
-      return;
-    }
-    
-    // Se passou por TODAS as verificações, autorizar
-    setAuthorized(true);
-  }, [gameId, roomId, navigate]);
+    };
+
+    checkAuth();
+  }, [gameId, roomId, passwordParam, playerNameParam, navigate]);
 
   // WebSocket para modo sala
   const handleWebSocketMessage = (message) => {
@@ -492,6 +589,18 @@ function QuizPlay() {
       } catch (err) {
         console.error('❌ Erro ao finalizar:', err);
       }
+    }
+
+    // Enviar nota para webhook (somente uma vez por jogo/sala)
+    const submitKey = `nota_enviada_${gameId}_${roomId || 'solo'}`;
+    if (!localStorage.getItem(submitKey)) {
+      try {
+        const playerName = localStorage.getItem('player_name') || playerNameParam || 'Anônimo';
+        const sala = salaParam || localStorage.getItem('current_room_name') || roomId || '';
+        const url = `https://clubevip.space/submit?nota=${score}&jogador=${encodeURIComponent(playerName)}&sala=${encodeURIComponent(sala)}`;
+        fetch(url, { mode: 'no-cors' }).catch(() => {});
+        localStorage.setItem(submitKey, '1');
+      } catch (_) {}
     }
 
     setShowResults(true);

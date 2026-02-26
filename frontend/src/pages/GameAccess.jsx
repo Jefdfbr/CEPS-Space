@@ -18,6 +18,8 @@ function GameAccess() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const gameId = searchParams.get('game_id');
+  const passwordParam = searchParams.get('password');
+  const playerNameParam = searchParams.get('player_name');
   
   const [game, setGame] = useState(null);
   const [rooms, setRooms] = useState([]);
@@ -26,8 +28,8 @@ function GameAccess() {
   const [error, setError] = useState('');
   
   const [formData, setFormData] = useState({
-    password: '',
-    playerName: localStorage.getItem('player_name') || '',
+    password: passwordParam || '',
+    playerName: playerNameParam || localStorage.getItem('player_name') || '',
   });
 
   useEffect(() => {
@@ -40,12 +42,14 @@ function GameAccess() {
       
       // Buscar informações do jogo
       const gameResponse = await axios.get(`${API_URL}/games/${gameId}`);
-      setGame(gameResponse.data);
+      const gameData = gameResponse.data;
+      setGame(gameData);
 
       // Buscar salas ativas para este jogo (endpoint público)
+      let activeRooms = [];
       try {
         const roomsResponse = await axios.get(`${API_URL}/rooms/by-game/${gameId}`);
-        const activeRooms = roomsResponse.data.filter(room => room.is_active);
+        activeRooms = roomsResponse.data.filter(room => room.is_active);
         setRooms(activeRooms);
 
         // Se houver apenas uma sala, preencher automaticamente o código
@@ -58,6 +62,45 @@ function GameAccess() {
       } catch (err) {
         console.error('Erro ao buscar salas:', err);
         setRooms([]);
+      }
+
+      // Auto-login via GET params: tentar entrar automaticamente se senha e nome fornecidos
+      if (passwordParam && playerNameParam && activeRooms.length > 0) {
+        let matched = null;
+        for (const room of activeRooms) {
+          try {
+            const existingSessionId = localStorage.getItem('session_id');
+            const joinRes = await axios.post(`${API_URL}/rooms/join-anonymous`, {
+              room_code: room.room_code,
+              password: normalizarSenha(passwordParam),
+              player_name: playerNameParam,
+              existing_session_id: existingSessionId || undefined,
+            });
+            matched = { room, joinData: joinRes.data };
+            break;
+          } catch (_) { continue; }
+        }
+
+        if (matched) {
+          const { session_id, room_id, player_color, player_name, room_code } = matched.joinData;
+          localStorage.setItem('session_id', session_id);
+          localStorage.setItem('player_name', player_name);
+          localStorage.setItem('player_color', player_color);
+          localStorage.setItem('current_room_name', matched.room.room_name || room_code);
+
+          const roomInfoRes = await axios.get(`${API_URL}/rooms/info/${room_code}`);
+          const seed = roomInfoRes.data.room.game_seed || room_code;
+
+          if (gameData.game_type === 'word_search') {
+            navigate(`/play/word-search?game_id=${gameId}&room_id=${room_id}&seed=${seed}`);
+          } else if (gameData.game_type === 'quiz') {
+            navigate(`/play/quiz?game_id=${gameId}&room_id=${room_id}&seed=${seed}`);
+          }
+          return; // Não chama setLoading(false) — já navegou
+        } else {
+          // Senha incorreta: mostrar formulário com erro
+          setError('Senha incorreta. Verifique e tente novamente.');
+        }
       }
     } catch (err) {
       console.error('Erro ao carregar jogo:', err);
